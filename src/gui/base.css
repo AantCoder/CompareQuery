@@ -1,0 +1,101 @@
+/* CompareQuery GUI — общие компоненты (GUI.md §1, §5); бегущее время .tm заполняет app.js */
+body{margin:0}
+.app{min-height:100%;display:flex;background:linear-gradient(160deg,#F7F8FC 0%,#EEF2F8 100%);font-family:Inter,system-ui,sans-serif;color:#1B2230;font-size:14px}
+.app>:first-child,.side{flex-shrink:0}
+.main{flex:1 1 0;min-width:0;box-sizing:border-box;padding:26px 32px 40px;display:flex;flex-direction:column;gap:20px}
+a{color:#2F4AC0}a:hover{color:#1F3496}
+h1{margin:0;font-size:28px;font-weight:700;letter-spacing:-.01em}
+h2{margin:0;font-size:16px;font-weight:700}
+.card{background:#FFF;border:1px solid #E3E7EF;border-radius:14px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.hl{border-color:#C9D3F5;background:linear-gradient(180deg,#F7F9FF 0%,#FFF 100%)}
+.lbl{font-size:13px;color:#485264;font-weight:500}
+.pale{color:#6E788B}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px}
+.crumbs{font-size:13px;color:#485264;font-weight:500}
+.crumbs a{color:#485264;text-decoration:none}.crumbs a:hover{color:#2F4AC0}
+.chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999px;font-size:12px;font-weight:600;background:#EEF1F6;color:#2D3646;white-space:nowrap}
+.c-ok{background:#E6F5EE;color:#17714A}.c-diff{background:#FDEBD3;color:#9A4A07}.c-fast{background:#E3ECFB;color:#1F55A8}.c-acc{background:#EBEFFD;color:#2F4AC0}
+/* кнопки */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:48px;padding:0 20px;border-radius:12px;border:1px solid #DCE1EA;background:#FFF;color:#2D3646;font:600 15px Inter,sans-serif;cursor:pointer;text-decoration:none;white-space:nowrap}
+.btn:hover{border-color:#C3CAD8;color:#1B2230}
+.btn.pri{border:none;background:#3B5BDB;color:#FFF;box-shadow:0 6px 16px rgba(59,91,219,.22)}.btn.pri:hover{background:#3451C6;color:#FFF}
+.btn.dark{border:none;background:#1B2230;color:#FFF}
+.btn.sm{height:36px;padding:0 14px;font-size:14px;border-radius:10px}
+.ib{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;border:1px solid #DCE1EA;background:#FFF;color:#485264;cursor:pointer}
+.ib.big{width:48px;height:48px;border-radius:12px}
+.ib svg,.btn svg{flex-shrink:0}
+/* крупные числа и время (§5.1) */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
+.kpi{padding:16px 20px;display:flex;flex-direction:column;gap:2px}
+.kpi .v{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:4px}
+.kpi .v small{font-size:15px;font-weight:500;color:#485264}
+.dur{font-size:12px;color:#1B2230;opacity:.58;font-variant-numeric:tabular-nums;font-weight:500}
+.delta{font-size:13px;font-weight:600;margin-top:6px}
+.up{color:#B45309}.down{color:#1F55A8}
+/* таблица (§5.2) */
+.tw{position:relative;overflow:hidden}
+.tw .tbar{display:flex;align-items:center;gap:12px;padding:14px 20px 10px}
+.tw .acts{position:absolute;top:10px;right:12px;display:flex;gap:4px;opacity:0;transition:opacity .15s;background:#FFF;border-radius:10px;padding:2px}
+.tw:hover .acts,.tw:focus-within .acts,.tw.show .acts{opacity:1}
+.acts .ib{width:32px;height:32px;border-radius:8px;border-color:#E3E7EF}
+.tscroll{overflow-x:auto}
+table.t{border-collapse:collapse;width:100%;font-size:13px;user-select:text}
+.t th{padding:6px 14px;font-weight:500;color:#485264;text-align:left;white-space:nowrap;border-bottom:1px solid #E3E7EF;cursor:pointer;position:relative;vertical-align:bottom;line-height:1.25}
+.t th:hover{color:#1B2230;background:#F7F8FC}
+.t th .s{font-size:10px;color:#3B5BDB;margin-left:4px}
+.t td{padding:5px 14px;border-top:1px solid #EEF1F6;white-space:nowrap;font-variant-numeric:tabular-nums;vertical-align:top;line-height:18px}
+.t tr:first-child td{border-top:none}
+.t tbody tr:hover td{background:#FAFBFE}
+.t .n{text-align:right}
+.t .b{font-weight:600}
+/* ожидание с бледным значком категории (§5.3) */
+.w{position:relative;display:inline-block;isolation:isolate;margin-left:13px;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.95em}
+.w::before{content:"";position:absolute;z-index:-1;left:-13px;top:50%;width:17px;height:17px;transform:translateY(-50%);background:currentColor;opacity:.24;-webkit-mask:var(--i) center/contain no-repeat;mask:var(--i) center/contain no-repeat}
+.w-lock{--i:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'><rect x='4.5' y='10.5' width='15' height='11' rx='2'/><path d='M8 10.5V7a4 4 0 0 1 8 0v3.5'/></svg>")}
+.w-disk{--i:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4'><ellipse cx='12' cy='5.5' rx='8' ry='3'/><path d='M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'/></svg>")}
+.w-mem{--i:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'><rect x='2.5' y='6' width='19' height='11' rx='1.5'/><path d='M7 17v3M12 17v3M17 17v3M7 9.5v4M12 9.5v4M17 9.5v4'/></svg>")}
+.w-cpu{--i:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'><rect x='6' y='6' width='12' height='12' rx='2'/><path d='M9.5 2v4M14.5 2v4M9.5 18v4M14.5 18v4M2 9.5h4M2 14.5h4M18 9.5h4M18 14.5h4'/></svg>")}
+.w-par{--i:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M3 12h6l5-6h7M9 12h12M9 12l5 6h7'/></svg>")}
+.w-latch{--i:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linejoin='round'><path d='M6 2.5h8l4.5 4.5v14.5H6z'/><path d='M14 2.5V7h4.5'/></svg>")}
+.w-net{--i:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'><rect x='3' y='4' width='18' height='12' rx='2'/><path d='M8 20.5h8M12 16v4.5'/></svg>")}
+.w-oth{--i:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'><circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/></svg>")}
+/* идет работа (§5.4) */
+.pulse{position:relative;display:inline-block;width:8px;height:8px;border-radius:50%;background:#3B5BDB;flex-shrink:0}
+.pulse::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid currentColor;color:#3B5BDB;animation:ring 1.6s ease-out infinite}
+.pulse.g{background:#1F8A5B}.pulse.g::after{color:#1F8A5B}
+@keyframes ring{from{transform:scale(.6);opacity:.7}to{transform:scale(1.7);opacity:0}}
+.track{position:relative;height:10px;border-radius:5px;background:#E8ECF5;overflow:hidden}
+.fill{position:absolute;left:0;top:0;bottom:0;border-radius:5px;background:linear-gradient(90deg,#3B5BDB,#5C7CFA);overflow:hidden}
+.fill::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);transform:translateX(-100%);animation:sheen 1.8s ease-in-out infinite}
+@keyframes sheen{to{transform:translateX(100%)}}
+/* поля ввода и окна */
+.field{display:flex;flex-direction:column;gap:6px}
+.inp{height:44px;box-sizing:border-box;border:1px solid #DCE1EA;border-radius:10px;background:#FFF;padding:0 12px;font:500 14px Inter,sans-serif;color:#1B2230;display:flex;align-items:center}
+.inp.focus{border-color:#3B5BDB;box-shadow:0 0 0 3px rgba(59,91,219,.15)}
+.sel{justify-content:space-between;gap:8px}
+.dlg{background:#FFF;border:1px solid #E3E7EF;border-radius:16px;box-shadow:0 24px 48px rgba(16,24,40,.14),0 2px 6px rgba(16,24,40,.06);display:flex;flex-direction:column}
+.dlg .dh{padding:22px 24px 0;display:flex;flex-direction:column;gap:6px}
+.dlg .db{padding:18px 24px;display:flex;flex-direction:column;gap:16px}
+.dlg .df{padding:16px 24px 20px;display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #EEF1F6}
+.note{font-size:13px;line-height:1.5;color:#485264}
+.tag{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 6px 0 10px;border-radius:8px;background:#EEF1F6;font-size:13px;font-weight:500}
+.tag .x{width:20px;height:20px;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;color:#6E788B}
+/* подстрочное значение в ячейке (§5.2) */
+.t .sv{display:block;font-size:11px;line-height:14px;font-weight:400;color:#1B2230;opacity:.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t .sv.wi{padding-left:13px}
+.t td.op{position:relative;padding-bottom:19px}
+.t td.op .sv{position:absolute;left:14px;bottom:5px;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px}
+.t th.op{min-width:230px}
+.tscroll::-webkit-scrollbar{height:8px}.tscroll::-webkit-scrollbar-thumb{background:#D5DAE4;border-radius:4px}
+/* строка «Назад» (§5.12) */
+.back{display:inline-flex;align-items:center;gap:3px;margin-left:-4px;font-size:13px;font-weight:500;color:#6E788B;text-decoration:none;align-self:flex-start}
+.back:hover{color:#2F4AC0}
+.ctxl{font-size:13px;font-weight:500;color:#6E788B}
+.tm{font-family:"JetBrains Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+/* счетчик с прокруткой цифр, 250 мс (§5.11) */
+.dg{display:inline-block;height:1.2em;line-height:1.2em;overflow:hidden;vertical-align:top}
+.dg>i{display:block;font-style:normal;animation-timing-function:cubic-bezier(.2,.7,.3,1);animation-iteration-count:infinite}
+.kpi .v .dg{height:1.2em}
+@media (prefers-reduced-motion:reduce){.fill::after{animation:none}}

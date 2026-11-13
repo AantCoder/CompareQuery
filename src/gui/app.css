@@ -1,0 +1,345 @@
+/* CompareQuery GUI: раскладка приложения и экраны (общие компоненты - base.css, GUI.md §5) */
+html,body{height:100%}
+body{background:#F7F8FC;overflow:hidden;font-family:Inter,system-ui,sans-serif;color:#1B2230;font-size:14px}   /* окна поверх и сообщения - вне .app */
+.app{height:100vh;min-height:0}
+.main{overflow-y:auto;height:100vh;padding-bottom:0}
+.main>*{flex-shrink:0}          /* блоки не ужимаются: экран прокручивается */
+/* нижний отступ - не padding: sticky-элементы (полоса прокрутки таблиц) прилипают к краю содержимого,
+   и с padding-bottom полоса висела бы на 40 px выше низа окна */
+.main::after{content:"";flex:0 0 20px}
+button{font:inherit}
+.btn,.ib{user-select:none}
+.btn[disabled]{opacity:.45;pointer-events:none}
+
+/* ---------------- левая панель (§3) */
+.side{width:280px;height:100vh;box-sizing:border-box;padding:16px 14px 14px;display:flex;flex-direction:column;gap:14px;background:rgba(255,255,255,.72);border-right:1px solid #E3E7EF;overflow:hidden}
+.ctx{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;color:#1B2230;cursor:pointer}
+.ctx:hover{background:#F1F3F8}
+.ctx .t{display:flex;flex-direction:column;min-width:0;flex:1}
+.ctx .t b{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctx .t span{font-size:12px;color:#6E788B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctx>svg{color:#485264;flex-shrink:0}
+.tree{display:flex;flex-direction:column;gap:1px;overflow-y:auto;min-height:0;flex:0 1 auto;margin:0 -4px;padding:0 4px}
+.ti{display:flex;align-items:center;gap:8px;min-height:32px;padding:0 8px;border-radius:8px;color:#1B2230;font-size:13px;cursor:pointer;flex-shrink:0}
+.ti:hover{background:#F1F3F8}
+.ti.s{font-size:14px;font-weight:600;margin-top:6px}
+.ti.r{padding-left:8px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ti.r .end{min-width:0;overflow:hidden}                  /* длинная пометка (en) сжимается, время не переносится */
+.ti.r .end>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ti.on{background:#EBEFFD}
+.ti.on.r{font-weight:600}
+.ti.pk{background:#EBEFFD;box-shadow:inset 3px 0 0 #3B5BDB;font-weight:600}
+.ti .end{margin-left:auto;display:flex;align-items:center;gap:6px}
+.ti .cnt{font-size:12px;color:#6E788B;font-weight:500}
+.ti .hv{color:#6E788B;display:inline-flex;opacity:0}
+.ti:hover .hv,.ti.on .hv{opacity:1}
+.ti .hv.on{opacity:.55}            /* у скрипта есть игнорируемые колонки: значок фильтра виден всегда */
+.ti .flt{color:#6E788B;display:inline-flex}
+.ti .chev{color:#6E788B;width:12px;display:inline-flex;margin-left:-4px}
+.ti .d{font-size:12px;font-weight:600}
+.ti .eq{font-size:12px;font-weight:700;width:14px;text-align:center}
+.star{width:16px;display:inline-flex;justify-content:center;flex-shrink:0}
+.star .hollow{opacity:0}
+.ti.r:hover .star .hollow{opacity:.5}
+.sgrp{display:flex;align-items:center;gap:5px;margin:12px 0 2px;padding:0 8px 0 8px;height:20px;color:rgba(27,34,48,.6);font-size:11px;font-weight:600;letter-spacing:.03em;cursor:pointer;flex-shrink:0}
+.sgrp .gl{flex:1;height:1px;background:currentColor;opacity:.45;margin-left:6px}
+.sgrp .gc{font-weight:500}
+.sgrp .pulse{margin-left:4px}   /* полупрозрачен только текст группы (color), значок выполнения - полной яркости */
+.nt{color:#6E788B;display:inline-flex;margin-left:2px}
+.inc{font-size:11.5px;color:#6E788B;font-style:italic}
+.abt{font-size:11.5px;color:#B45309;opacity:.9}
+.pairbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:-4px;padding:6px 6px 6px 12px;border-radius:12px;background:#EEF2FD;border:1px solid #C9D3F5;font-size:13px;font-weight:600;color:#2F4AC0;flex-shrink:0}
+.hint{flex:1;display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:flex-start;padding-top:10px;text-align:center;padding:0 22px;font-size:13px;line-height:1.55;color:#1B2230;opacity:.55;min-height:0;overflow:hidden}
+.menu{display:flex;flex-direction:column;gap:1px;border-top:1px solid #E3E7EF;padding-top:10px;flex-shrink:0}
+.menu .m{font-size:12px;color:#1B2230;opacity:.58;padding:0 8px 4px}
+.menu a{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;color:#1B2230;font-size:14px;font-weight:500;cursor:pointer}
+.menu a:hover{background:#F1F3F8}
+.menu svg{color:#485264}
+/* плашки «Новое наблюдение» (§5.9): крупная строка ужимается шрифтом, мелкая - перенос по словам, лишнее
+   обрезается; кнопки «+» и «обновить» и значок правки видны при наведении */
+.tiles{position:relative;grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
+.tile{position:relative;height:142px;box-sizing:border-box;overflow:hidden}
+.tile .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:22px;flex-shrink:0}
+.tvals{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;margin-top:4px;gap:1px}
+.tvals .tb{font-size:24px;font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden;font-variant-numeric:tabular-nums}
+.tvals .tb + .tb{font-size:19px}
+.tvals .ts{font-size:12px;line-height:1.35;color:#1B2230;opacity:.65;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+.tvals .ts.one{-webkit-line-clamp:1;white-space:nowrap;text-overflow:ellipsis;display:block}
+.tvals .ts.err{color:#B42318;opacity:.85}
+.tile .tedit{position:absolute;top:10px;right:10px;opacity:0;transition:opacity .15s;color:#485264;cursor:pointer}
+.tile:hover .tedit{opacity:1}
+.tiles .tacts{position:absolute;top:50%;right:-17px;transform:translateY(-50%);display:flex;flex-direction:column;gap:6px;opacity:0;transition:opacity .15s;z-index:2}
+.tiles:hover .tacts,.tiles .tacts:hover{opacity:1}
+.tiles .tacts .ib{background:#FFF;border:1px solid #DCE1EA;border-radius:50%;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:#2F4AC0;box-shadow:0 2px 6px rgba(16,24,40,.12)}
+.tiles .tacts .ib:hover{border-color:#9FB2F2}
+textarea.tsql{height:220px;padding:10px 12px;resize:vertical;font-size:13px;line-height:1.5;white-space:pre;display:block}
+
+/* баллон «Для начала задайте подключения к базе» у кнопки подключения (как подсказки диалогов) */
+.ctip{position:fixed;z-index:80;max-width:260px;padding:10px 14px;border-radius:10px;background:#1B2230;color:#FFF;font-size:13px;line-height:1.45;box-shadow:0 10px 26px rgba(16,24,40,.25);animation:ctipin .2s ease-out}
+.ctip::before{content:"";position:absolute;left:-7px;top:50%;margin-top:-7px;border:7px solid transparent;border-left:0;border-right-color:#1B2230}
+@keyframes ctipin{from{opacity:0;transform:translateX(6px)}to{opacity:1;transform:none}}
+
+/* результат «Проверить» в настройках подключения */
+.cnres{font-size:12.5px;color:#485264;min-width:0;overflow-wrap:anywhere}
+.cnres.ok{color:#17714A;font-weight:600}
+.cnres.err{color:#B42318}
+
+/* строка «Справка» с кнопкой языка (§5.22) */
+.menu .mrow{display:flex;align-items:center;gap:6px}
+.menu .mrow>a{flex:1}
+.langb{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 7px;border:1px solid #DCE1EA;border-radius:7px;background:#FFF;font-size:11.5px;font-weight:600;color:#485264;cursor:pointer;user-select:none}
+.langb:hover{border-color:#9FB2F2;color:#2F4AC0}
+.langb svg{color:inherit}
+.langpop{position:fixed;z-index:70;display:flex;flex-direction:column;min-width:150px;padding:4px;border:1px solid #E3E7EF;border-radius:10px;background:#FFF;box-shadow:0 12px 28px rgba(16,24,40,.14)}
+.langpop a{display:flex;gap:10px;align-items:center;padding:7px 10px;border-radius:7px;font-size:13px;color:#1B2230;cursor:pointer}
+.langpop a b{width:22px;font-size:11.5px;color:#485264}
+.langpop a:hover{background:#F1F3F8}
+.langpop a.on{background:#EBEFFD}
+.menu .about{font-size:11.5px;color:#1B2230;opacity:.85;padding:6px 8px 0}
+.menu .about a.lnk{display:inline;padding:0;font-size:inherit;font-weight:500;color:#2F4AC0;text-decoration:underline;cursor:pointer}
+.menu .about a.lnk:hover{background:none}
+
+/* ---------------- редактор (§4) */
+.popt{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:500;cursor:pointer}
+.num{width:56px;height:36px;text-align:center;font-variant-numeric:tabular-nums;border:1px solid #DCE1EA;border-radius:10px;font:500 14px Inter,sans-serif}
+.num:disabled{background:#F1F3F8;color:#6E788B}
+.sw{position:relative;width:38px;height:22px;border-radius:11px;background:#D5DAE4;flex-shrink:0;transition:background .15s}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#FFF;box-shadow:0 1px 2px rgba(0,0,0,.15);transition:left .15s}
+.sw.on{background:#3B5BDB}.sw.on::after{left:19px}
+.ed{display:flex;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13.5px;line-height:1.75;flex:1;min-height:0;overflow:hidden;border-radius:14px}
+.ln{padding:14px 12px 14px 18px;text-align:right;color:#959DAD;user-select:none;border-right:1px solid #EEF1F6;background:#FAFBFD;overflow:hidden;white-space:pre}
+.code{padding:14px 20px;color:#2D3646;flex:1;margin:0;font:inherit;border:none;outline:none;resize:none;white-space:pre;overflow:auto;background:transparent;tab-size:4}
+/* подсветка синтаксиса: pre с цветным текстом под прозрачным текстом textarea (каретка и выделение видны) */
+.edw{position:relative;flex:1;min-width:0}
+.edw .code{position:absolute;inset:0;box-sizing:border-box;width:100%;height:100%}
+pre.hl{margin:0;overflow:hidden;pointer-events:none;color:#2D3646}
+.edw textarea.code{color:transparent;caret-color:#1B2230;background:transparent}
+.edw textarea.code::selection{background:rgba(59,91,219,.22);color:transparent}
+.xk{color:#2F4AC0}.xc{color:#6E788B;font-style:italic}.xs{color:#17714A}.xn{color:#9A4A07}.xv{color:#7A3FC4}.xt{color:#0E7490}.xq{color:#2D3646}
+.status{display:flex;gap:18px;padding:8px 18px;border-top:1px solid #EEF1F6;font-size:12px;color:#6E788B}
+
+/* ---------------- идет запуск: ход и стопка операторов (§4.1, §5.10) */
+.step{display:flex;align-items:center;gap:10px;font-size:14px}
+.dot{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
+.logbox{padding:4px 20px 16px;font-size:12.5px;line-height:1.5;color:#2D3646;user-select:text;max-height:320px;overflow-y:auto;font-family:"JetBrains Mono",ui-monospace,monospace}
+.logl{display:flex;gap:14px;padding:2px 0;white-space:pre-wrap}
+.logl>span:first-child{color:#6E788B;min-width:92px;flex-shrink:0}
+.logl.msg>span:last-child{color:#1B2230;font-weight:600}
+.logl.msg.err>span:last-child{color:#9A3412}
+.tagm{display:inline-block;margin-right:8px;padding:0 6px;border-radius:5px;background:#EBEFFD;color:#2F4AC0;font:600 11px/17px Inter,sans-serif;vertical-align:1px}
+.logl.err .tagm{background:#FDE7DC;color:#9A3412}
+/* карточки - на местах (top), смену анимирует JS (stackShow); высоту и маску задает stackSetup */
+.stack{position:relative;overflow:clip;overflow-clip-margin:4px}   /* запас - тень и подъем новой карточки на 2 px */
+.stack>.opc{position:absolute;left:0;right:0;top:0}
+.opc{box-sizing:border-box;border:1px solid #9FB2F2;background:#F7F9FF;border-radius:14px;padding:14px 20px;display:flex;flex-direction:column;gap:8px;box-shadow:0 1px 2px rgba(16,24,40,.04);transition:border-color .5s,background-color .5s,opacity .5s}
+.opc.done{border-color:#E3E7EF;background:#FAFAFB}
+.opc.done .opb,.opc.done .optm{filter:grayscale(.8);opacity:.62}
+.opc.old{opacity:.85}
+.oph{display:flex;align-items:center;gap:14px;min-height:26px}
+.oph .lbl.now{color:#2F4AC0}.opc.done .oph .lbl.now{color:#6E788B}
+.optm{margin-left:auto;font-size:18px;font-weight:500;color:#2D3646}
+.opn{font-size:18px;font-weight:700}.opn span{color:#485264;font-weight:500}
+.opx{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px;color:#485264;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:text}
+.wt{color:#9A4A07;display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:700;transition:opacity 3s,transform 3s;animation:wp 2.4s ease-in-out infinite}
+.wt .tm{font-weight:500}
+.wt.ended{font-weight:400;animation:none}
+.wt.fade{opacity:0;transform:translateX(24px)}
+@keyframes wp{50%{opacity:.9}}
+
+/* ---------------- строка консоли наблюдения (§5.8) */
+.strip{display:flex;align-items:center;gap:18px;padding:0 22px;height:92px}
+.lines{position:relative;flex:1;height:30px;margin-top:22px;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:15px;min-width:0}
+.cl{position:absolute;left:0;right:0;top:0;line-height:30px;display:flex;gap:16px;white-space:nowrap;user-select:text;transition:transform .5s,opacity .5s;animation:clin .4s ease-out}
+@keyframes clin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.cl.old{transform:translateY(-21px);opacity:.4}
+.cl.gone{transform:translateY(-31px);opacity:0;transition:transform .6s,opacity .6s}
+.cl .tmc{color:#6E788B}.cl .ob{font-weight:700;color:#1B2230}.cl .tx{color:#485264;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+.cl .optm{margin-left:auto;color:#2D3646;font-weight:500;padding-left:40px;font-size:15px}
+.cl .wt{flex-shrink:0;font-size:15px}
+
+/* кольцо ожидания обновления реестра наблюдения: заполняется за 10 с, обнуляется с новыми файлами */
+.ring{display:inline-flex;margin-left:2px}
+.ring circle{fill:none;stroke-width:2.6}
+.ring .rb{stroke:#E3E7EF}
+.ring .rf{stroke:#3B5BDB;stroke-linecap:round;stroke-dasharray:50.27;stroke-dashoffset:50.27;transform:rotate(-90deg);transform-origin:10px 10px;animation:ringfill linear forwards}
+@keyframes ringfill{to{stroke-dashoffset:0}}
+
+/* ---------------- итог: результаты, заметка, вердикт */
+.res{display:flex;align-items:center;gap:14px;padding:12px 20px;border-top:1px solid #EEF1F6;color:#1B2230;cursor:pointer}
+.res:hover{background:#FAFBFE}
+.res .nm{font-weight:600;min-width:110px}
+.res .go{margin-left:auto;color:#6E788B}
+/* отличия таблицы от опорного (§5.19): раскрывается под строкой таблицы */
+.res .dtg{height:28px;padding:0 10px;gap:5px;font-size:12.5px}
+.res .dtg svg{transition:transform .2s;transform:rotate(-90deg)}
+.res.dopen .dtg svg{transform:none}
+.res.dopen{background:#FAFBFE}
+.rdiff{display:grid;grid-template-rows:0fr;transition:grid-template-rows .25s ease-out}
+.rdiff.open{grid-template-rows:1fr;border-top:1px solid #EEF1F6}
+.rdiff>div{overflow:clip;min-height:0}   /* clip: полоса прокрутки таблицы внутри остается sticky */
+.dsum{display:flex;flex-wrap:wrap;gap:4px 18px;padding:12px 20px 10px;font-size:12.5px;color:#2D3646}
+.dk{font-size:11.5px;font-weight:600;padding:1px 7px;border-radius:5px;white-space:nowrap}
+.k-diff .dk{background:#FDEBD3;color:#9A4A07}
+.k-A .dk{background:#FDE7DC;color:#9A3412}
+.k-B .dk{background:#E6F5EE;color:#17714A}
+.t .old{color:#9A3412;text-decoration:line-through;text-decoration-color:rgba(154,52,18,.45)}
+.t .new{color:#17714A;font-weight:600}
+.dmore{padding:8px 20px 12px;font-size:12px;color:#6E788B;border-top:1px solid #EEF1F6}
+.noteed{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:4px 10px 4px 8px;margin-left:-8px;border-radius:8px;font-size:14px;color:#2D3646;cursor:text;outline:none;min-width:120px}
+.noteed:hover,.noteed:focus-within{background:#F1F3F8}
+.noteed svg{color:#6E788B;flex-shrink:0}
+.noteed .txt{outline:none;min-width:80px}
+.noteed .txt:empty::before{content:attr(data-ph);color:#6E788B}   /* подсказка - из JS, на языке интерфейса */
+.verdict{padding:18px 22px;display:flex;align-items:center;gap:16px;color:#1B2230}
+.verdict .ic{width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;flex-shrink:0}
+.v-diff{border-color:#F3D4AE;background:linear-gradient(180deg,#FFF8EF 0%,#FFF 100%)}
+.v-diff .ic{background:#FDEBD3;color:#9A4A07}
+.v-ok{border-color:#BFE3CF;background:linear-gradient(180deg,#F2FBF6 0%,#FFF 100%)}
+.v-ok .ic{background:#E6F5EE;color:#17714A}
+.v-none .ic{background:#EEF1F6;color:#485264}
+pre.rep{margin:0;padding:16px 20px;font:12.5px/1.55 "JetBrains Mono",ui-monospace,monospace;white-space:pre-wrap;user-select:text;color:#2D3646}
+
+.kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}   /* пять плашек в ряд от ~920 px */
+
+/* ---------------- плашка задержек выборки: больше 1 с всего - красная рамка и едва заметный фон */
+.slowk .sn{font-size:11.5px;line-height:1.35;color:#1B2230;opacity:.6;margin-top:4px}
+.slowk.warn{border-color:#E8A0A0;background:#FFFAFA}
+.slowk.warn .v{color:#B42318}
+
+/* ---------------- горизонтальная прокрутка таблиц (§5.2): полоса прилипает к низу окна */
+.tw{overflow:clip}              /* clip, а не hidden: карточка не становится областью прокрутки для sticky */
+.tscroll::-webkit-scrollbar{display:none}
+.hbar{position:sticky;bottom:0;z-index:3;height:13px;overflow-x:auto;overflow-y:hidden;background:rgba(255,255,255,.94);border-top:1px solid #EEF1F6}
+.hbar>div{height:1px}
+.hbar::-webkit-scrollbar{height:9px}
+.hbar::-webkit-scrollbar-thumb{background:#C9CFDA;border-radius:5px}
+.hbar::-webkit-scrollbar-thumb:hover{background:#A9B1C0}
+
+/* ---------------- таблицы: подстроки, фильтр */
+.t td.op{padding-bottom:5px}
+.t td.op .sv{position:static;font-family:"JetBrains Mono",ui-monospace,monospace;max-width:360px;font-size:12px;opacity:.78}  /* подстрока в своей ячейке; высота строки (14 px) прежняя */
+.t th.s-on{color:#1B2230}
+.t a{font-weight:600;text-decoration:none;cursor:pointer}
+.fl{display:inline-flex;align-items:center;gap:8px;height:34px;width:260px;box-sizing:border-box;padding:0 8px 0 10px;border:1px solid #DCE1EA;border-radius:9px;background:#FFF}
+.fl:focus-within{border-color:#3B5BDB;box-shadow:0 0 0 3px rgba(59,91,219,.12)}
+.fl input{border:none;outline:none;font:500 13px Inter,sans-serif;flex:1;min-width:0;background:transparent}
+mark{background:#FDEFC7;color:inherit;border-radius:3px;padding:0 1px}
+.empty{padding:28px 20px;text-align:center;color:#6E788B;font-size:13px}
+
+/* ---------------- новое наблюдение (§5.9) */
+.bignum{height:96px;border:2px solid #3B5BDB;border-radius:16px;box-shadow:0 0 0 4px rgba(59,91,219,.12);background:#FFF;box-sizing:border-box;padding:0 22px;font:700 52px "JetBrains Mono",ui-monospace,monospace;color:#1B2230;width:100%;outline:none}
+.t.compact td{padding:3px 14px;vertical-align:middle}
+.t tr.on td{background:#EEF2FD}
+.flts{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;padding:0 20px 14px}   /* не помещаются - переносятся */
+.flts .field{flex:1 1 170px;min-width:150px}
+.flts .popt{flex:0 0 auto}
+select.inp{appearance:auto;cursor:pointer}
+
+/* ---------------- сравнение (§4.2) */
+.trow{display:flex;align-items:center;gap:14px;padding:12px 20px;border-top:1px solid #EEF1F6}
+.trow:first-child{border-top:none}
+.trow h2{font-size:15px}
+.v-fast{border-color:#C9D9F3;background:linear-gradient(180deg,#F4F8FF 0%,#FFF 100%)}
+.v-fast .ic{background:#E3ECFB;color:#1F55A8}
+
+/* ---------------- окно игнорируемых колонок (§5.6): измененный блок - зеленая рамка и карандаш */
+.ignb{position:relative;display:flex;flex-direction:column;gap:10px;padding:14px 16px;border:1px solid #E3E7EF;border-radius:12px}
+.ignb.chg{border-color:#5FB98A;box-shadow:0 0 0 3px rgba(23,113,74,.08)}
+.igpen{position:absolute;top:10px;right:14px;color:#17714A;opacity:.18;pointer-events:none}
+.igt{display:flex;gap:12px;align-items:baseline}
+.igl{flex:0 0 110px;font-size:13px;color:#485264}
+.igc{display:flex;flex-wrap:wrap;gap:6px}
+.igk{display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 9px;border-radius:7px;background:#F1F3F8;font-size:13px;font-weight:500}
+.igk a{cursor:pointer;color:#6E788B;padding:0 4px;font-size:15px;line-height:1}
+.igk a:hover{color:#9A3412}
+.igk.new{background:#E6F5EE;color:#17714A;box-shadow:inset 0 0 0 1px #A9DCC1}
+
+/* ---------------- график линейки (§5.14) */
+.lchart{position:relative;padding:4px 20px 14px}
+.lchart svg{display:block;overflow:visible}
+.lchart .pt{cursor:pointer}
+.ltip{position:absolute;pointer-events:none;background:#1B2230;color:#FFF;border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.5;white-space:nowrap;transform:translate(-50%,calc(-100% - 12px));z-index:4}
+
+/* исходный запрос сессии в шапке наблюдения: одна строка моноширинным, полный текст - в подсказке */
+.inpq{font:12.5px "JetBrains Mono",ui-monospace,monospace;color:#2D3646;max-width:900px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:text}
+.inpq .pale{font-family:Inter,sans-serif}
+
+/* ---------------- текущие и тяжелые запросы (§5.20, §5.21) */
+.menu a.on{background:#EBEFFD}
+.ring.cd{cursor:pointer;margin-left:0}
+.ring.cd .rf{stroke-dashoffset:0;animation:none}
+.ring.cd.wait .rf{animation:ringdown linear forwards}                 /* полное кольцо тает до нуля */
+.ring.cd.load .rf{stroke:#9FB2F2}
+.ring.cd.pause .rf{stroke:#C9CFDA}
+@keyframes ringdown{to{stroke-dashoffset:50.27}}
+.kpis.k6{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}   /* шесть плашек в ряд от ~880 px */
+.kpi.warn{border-color:#E8A0A0;background:#FFFAFA}
+.kpi.warn .v{color:#B42318}
+.t.srv td{vertical-align:middle}
+.t.srv th.hot{color:#2F4AC0}
+.t .acts2{white-space:nowrap;padding-right:6px}
+.t .acts2 .ib{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:7px;color:#485264;cursor:pointer}
+.t .acts2 .ib:hover{background:#EBEFFD;color:#2F4AC0}
+.t .acts2 .ib.danger:hover{background:#FDE7DC;color:#B42318}
+.t tr.blocked td{background:#FFF8EF}
+.t tr.blocker td{background:#FFF3F1}
+.t tr.blocker td:first-child{box-shadow:inset 3px 0 0 #D9534F}
+.t .hotv{color:#B42318}
+.t td.clip{max-width:220px;overflow:hidden;text-overflow:ellipsis}
+pre.sqlbox{max-height:62vh;overflow:auto;border:1px solid #EEF1F6;border-radius:10px;background:#FAFBFD;white-space:pre}
+
+/* ---------------- окна поверх и сообщения */
+.overlay{position:fixed;inset:0;background:rgba(27,34,48,.28);display:flex;align-items:center;justify-content:center;z-index:50}
+.dlg h2{font-size:19px}
+.proc{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-radius:10px;background:#F6F8FB}
+.proc .pulse{margin-top:6px}
+input.inp{outline:none}
+input.inp:focus,textarea.inp:focus{border-color:#3B5BDB;box-shadow:0 0 0 3px rgba(59,91,219,.15)}
+.toasts{position:fixed;right:20px;bottom:20px;display:flex;flex-direction:column;gap:8px;z-index:60}
+.toastm{background:#1B2230;color:#FFF;padding:10px 14px;border-radius:10px;font-size:13px;max-width:420px;box-shadow:0 8px 20px rgba(16,24,40,.2)}
+.toastm.err{background:#9A3412}
+
+/* быстрые подсказки вместо системных (title): появляются почти сразу */
+.qtip{position:fixed;z-index:90;max-width:420px;padding:6px 9px;border-radius:7px;background:#1B2230;color:#FFF;font:500 12px/1.4 Inter,system-ui,sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;box-shadow:0 6px 16px rgba(16,24,40,.2)}
+
+/* контекстное меню строки таблицы (правая кнопка): действия кнопок в начале строки */
+.ctxm{position:fixed;z-index:85;min-width:200px;padding:4px;border:1px solid #E3E7EF;border-radius:10px;background:#FFF;box-shadow:0 12px 28px rgba(16,24,40,.16);display:flex;flex-direction:column}
+.ctxm a{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:7px;font-size:13px;color:#1B2230;cursor:pointer;white-space:nowrap}
+.ctxm a svg{color:#485264;flex-shrink:0}
+.ctxm a:hover{background:#EBEFFD}
+.ctxm a.danger{color:#B42318}.ctxm a.danger svg{color:#B42318}
+.ctxm a.danger:hover{background:#FDE7DC}
+.ctxm hr{border:none;border-top:1px solid #EEF1F6;margin:3px 0}
+/* свернутая таблица (длинный журнал) */
+/* заметка запуска в панели: после значка курсивом, сколько поместится */
+.ti.r .ntx{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;font-size:12px;color:#485264;font-weight:400}
+
+/* полоса прогресса нескольких прогонов: участок текущего прогона светлее, по нему бегает ползунок */
+.track .seg{position:absolute;top:0;bottom:0;background:#CBD6FB;border-radius:0 5px 5px 0;overflow:hidden}
+.track .seg::after{content:"";position:absolute;top:0;bottom:0;width:35%;border-radius:5px;background:linear-gradient(90deg,#3B5BDB,#5C7CFA);animation:segrun 1.6s ease-in-out infinite}
+@keyframes segrun{from{left:-35%}to{left:100%}}
+/* «уменьшить движение» (часто включено в Windows по удаленному рабочему столу и в виртуальных машинах):
+   ползунок - мягким мерцанием; расходящиеся круги точки остаются (маленькие, просьба пользователя) */
+@media (prefers-reduced-motion:reduce){
+  .track .seg::after{animation:pulsefade 1.6s ease-in-out infinite;left:0;width:100%;opacity:.5}
+}
+@keyframes pulsefade{50%{opacity:.35}}
+/* «Текущие запросы»: исходный запрос сессии одной строкой (полный - в подсказке) */
+.t td.inbuf{max-width:320px;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:#2D3646}
+/* сворачивание таблиц (.tw.tc): значок всегда у правого края заголовка, кнопки карточки - левее него */
+.tw .tcol{position:absolute;top:13px;right:12px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:8px;color:#9AA3B5;cursor:pointer;z-index:3}
+.tw .tcol:hover{background:#F1F3F8;color:#485264}
+.tw .tcol svg{transition:transform .2s}
+.tw.tcl .tcol svg{transform:rotate(-90deg)}
+.tw.tc>.tbar{padding-right:52px}
+.tw.tc>.acts{right:46px}
+.tw.tcl>:not(.tbar):not(.tcol){display:none}
+.tw.tcl>.tbar{padding-bottom:14px}
+/* реестр: оператор и число запусков в одной колонке (начало текста - под обоими) */
+.t .opl{display:flex;align-items:baseline;justify-content:space-between;gap:14px}
+.t .opl .runs{font-weight:500;color:#6E788B;font-variant-numeric:tabular-nums;white-space:nowrap}
+.t .opl .runs.many{font-weight:700;color:#2F4AC0}
+.t th .opl .runs{font-weight:600;cursor:pointer}
+.t th .opl .runs:hover{color:#2F4AC0}
+/* пустое место кнопки (нет файла): кнопки столбца стоят ровно */
+.acts2 .ib.off{visibility:hidden}
