@@ -578,6 +578,9 @@ def build_conn_str(settings, app):
     if "app" not in keys:
         cs += f"APP={app};"
     if not login:
+        # пустой логин - вход Windows: без Trusted_Connection драйвер входит пустым логином SQL и получает отказ
+        if not {"uid", "pwd", "trusted_connection", "authentication"} & set(keys):
+            cs += "Trusted_Connection=yes;"
         return cs
     if "uid" in keys or "pwd" in keys:
         raise ScriptError("строка подключения уже содержит UID или PWD, а в настройках задан login: "

@@ -44,7 +44,7 @@ The settings are in `CompareQuery.json` next to the script, not in the current f
 ```
 
 - `connection_string`: an ODBC connection string without login and password. The driver in the example is taken from the installed ones. If the string has no `APP`, the script adds the program name: `CompareQuery` for the work connection and `CompareQuery control` for the control one. This lets the administrator see whose sessions they are.
-- `login`, `password`: appended to the string as `UID=...;PWD={...}`. The password may contain any characters. If `login` is empty, the string is used as is (for example, with `Trusted_Connection=yes`). If the string already contains `UID` or `PWD` and `login` is set, it is an error.
+- `login`, `password`: appended to the string as `UID=...;PWD={...}`. The password may contain any characters. If `login` is empty, Windows authentication is used: `Trusted_Connection=yes` is appended unless the string already has `Trusted_Connection`, `Authentication`, `UID` or `PWD` (then it is used as is). If the string already contains `UID` or `PWD` and `login` is set, it is an error.
 - `ignored_columns`: ignored columns. A group applies if `mask` matches the SQL file name without folder and extension (`*` and `?`, case-insensitive). In `tables` the key is the number of a result table or `*` for all tables, the value is a list of columns. If several groups match, their columns are combined. Columns that the table does not have are skipped. The old format with `"columns"` is not accepted: the script explains how to convert it.
 
 An ignored column:
