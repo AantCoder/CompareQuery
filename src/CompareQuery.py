@@ -1440,7 +1440,9 @@ class Sampler(threading.Thread):
              tuple(r[10:14]) + (blocking, by), r[14])
         self.lookup.want_text(handle)
         self.push(s)
-        return s, PROFILE_FAST_MS if self.in_function(handle) else PROFILE_INTERVAL_MS
+        # внутри функции или с испорченными границами оператора - следующий опрос сразу
+        again = self.ready(handle) and self.builder.statement(s) is None
+        return s, PROFILE_FAST_MS if again else PROFILE_INTERVAL_MS
 
     def ready(self, handle):
         return handle in self.texts
@@ -1462,11 +1464,6 @@ class Sampler(threading.Thread):
             key = (s[0], label)
         return {"key": key, "label": label, "line": line, "text": text,
                 "wait": (s[6][0] or "").strip(), "blocked_by": s[6][5]}
-
-    def in_function(self, handle):
-        t = self.texts.get(handle)
-        obj = self.objects.get((t[0], t[1])) if t and t[1] is not None else None
-        return obj is not None and obj[1] in FUNC_TYPES
 
     def push(self, item):
         self.waiting.append(item)
@@ -1498,8 +1495,15 @@ class Sampler(threading.Thread):
         self.join()
 
 
+STMT_MIN_LEN = 2    # текст оператора не длиннее - границы испорчены, выборка считается как внутри функции
+
+
 def describe(sampler, s, batch_start, sql_name, adhoc_label):
-    """Оператор выборки: словарь с ключом (объект, строка, хэш текста) или None, если это функция."""
+    """Оператор выборки: словарь с ключом (объект, строка, хэш текста) или None, если это функция
+    или границы оператора испорчены: в sys.dm_exec_requests смещения начала и конца читаются без
+    блокировки и в момент смены оператора бывают несогласованными (конец раньше начала, текст из
+    одной буквы). Такая выборка, как и выборка внутри функции, относится к предыдущему оператору,
+    а следующий опрос идет сразу."""
     handle, start, end = s[1], s[2], s[3]
     t = sampler.texts.get(handle)
     if t is None:
@@ -1513,6 +1517,8 @@ def describe(sampler, s, batch_start, sql_name, adhoc_label):
     i0 = start // 2
     i1 = len(text) if end is None or end < 0 else end // 2 + 1
     stmt = text[i0:i1].strip()
+    if len(stmt) <= STMT_MIN_LEN:
+        return None     # границы оператора испорчены (сервер отдал их в момент смены оператора)
     line = text.count("\n", 0, i0) + 1
     if obj is not None:
         label = obj[0]
@@ -1606,6 +1612,7 @@ class StatsBuilder:
         self.samples = self.func = 0
         self.lost = ZERO
         self.prev = self.last = self.seg = None
+        self.since = None       # --session: время сервера начала наблюдения
         self.reset_pending()
 
     def reset_pending(self):
@@ -1624,6 +1631,11 @@ class StatsBuilder:
         else:    # новый запрос (батч): счетчики с его начала
             self.idle()
             d, t0 = s[5], s[0][1]
+            if self.since is not None and isinstance(t0, dt.datetime) and t0 < self.since:
+                # --session: запрос начался до наблюдения. Его счетчики к первой выборке - все, что он
+                # потратил раньше, на любых операторах; оператору первой выборки они не относятся
+                # (иначе в первой строке журнала - время от начала запроса).
+                d, t0 = ZERO, s[7]
         self.prev = s
         ex = interval_extra(d, s[6])
         st = self.statement(s)
@@ -1775,6 +1787,7 @@ class Pass:
         pyodbc, ctl = self.run.pyodbc, None
         try:
             spid = query_spid(cur)
+            Events.emit("spid", spid=spid)
             ctl = pyodbc.connect(self.run.ctl_conn_str, autocommit=True)
             self.control = Control(ctl, spid)
             self.client_ok = self.control.client_ok
@@ -2607,6 +2620,7 @@ class SessionMonitor:
         self.lookup = lookup
         self.sampler = Sampler(control, lookup, {}, None, "(батч)", self.log_file.add)
         self.builder = self.sampler.builder
+        self.builder.since = self.started
         self.now_events = NowEvents()
 
     def warn(self, msg):
@@ -3346,34 +3360,69 @@ def read_registry(r):
                 rows.append({"label": d["Объект"], "line": int(d["Строка"]), "hash": d["Хэш"],
                              "time": int(d["Время мс"]), "cpu": int(d["CPU мс"]),
                              "reads": int(d["Логических чтений"]), "head": d.get("Начало текста") or "",
-                             "row": d})
+                             "runs": int(d.get("Запусков") or 0), "row": d})
     except (StopIteration, KeyError, ValueError):
         return None, f"Реестр {r['label']} поврежден: {rel}"
     return rows, None
 
 
 STMT_PREFIX_LEN = 20       # режим 2: начало текста, по которому различаются измененные операторы одного промежутка
+OBJECT_MAP_MIN = 3         # режим 2: объект A считается переименованным в объект B, если у них столько одинаковых операторов
+
+
+def object_map(rows_a, rows_b):
+    """Переименованные объекты: {объект A (нижний регистр): (объект A, объект B, число одинаковых операторов)}.
+
+    Копию процедуры (PrintNewPD -> PrintNewPDTest) или скрипта под другим именем узнают по операторам:
+    хэш текста, который встречается ровно один раз в A и один раз в B, - один и тот же оператор.
+    Объект A сопоставляется с объектом B с другим именем, если у них не меньше OBJECT_MAP_MIN таких
+    операторов и это больше половины однозначных операторов объекта A - случайное совпадение одного
+    короткого оператора в чужом объекте ничего не переименует."""
+    ca = collections.Counter(r["hash"] for r in rows_a)
+    cb = collections.Counter(r["hash"] for r in rows_b)
+    b_of = {r["hash"]: r["label"] for r in rows_b if cb[r["hash"]] == 1}
+    votes, total = collections.defaultdict(collections.Counter), collections.Counter()
+    for r in rows_a:
+        if ca[r["hash"]] == 1 and r["hash"] in b_of:
+            total[r["label"].lower()] += 1
+            votes[r["label"].lower()][b_of[r["hash"]]] += 1
+    names = {r["label"].lower(): r["label"] for r in rows_a}
+    out = {}
+    for obj, v in votes.items():
+        target, n = v.most_common(1)[0]
+        if target.lower() != obj and n >= OBJECT_MAP_MIN and n * 2 > total[obj]:
+            out[obj] = (names[obj], target, n)
+    return out
 
 
 def statement_pairs(rows_a, rows_b):
     """Пары операторов двух реестров: [(строка A или None, строка B или None, пометка)].
 
-    1. Один и тот же оператор - тот же объект и хэш текста (одинаковые - по порядку строк).
+    0. Переименованные объекты (object_map) считаются одним объектом.
+    1. Один и тот же оператор - тот же объект и хэш текста (одинаковые - по порядку строк); место в
+       объекте не важно: переставленные неизмененные операторы тоже находятся.
     2. Измененный текст ищется только в своем промежутке: совпавшие по хэшу операторы объекта - опорные
        точки (те, что идут в одном порядке в A и B), и оператор между двумя соседними опорными в A
        сопоставляется с оператором между теми же опорными в B. Сдвиг строк (вставили строки выше)
-       не мешает, а оператор не может "перепрыгнуть" через неизмененный. В промежутке: поровну
-       операторов - пары по порядку; иначе пары на одной строке, затем по началу текста
-       (STMT_PREFIX_LEN символов без учета пробелов и регистра), если оно однозначно.
+       не мешает, а оператор не может "перепрыгнуть" через неизмененный. В промежутке по очереди:
+       по началу текста (STMT_PREFIX_LEN символов без учета пробелов и регистра), если оно
+       однозначно, затем оставшиеся на одной строке. "По порядку" не сопоставляется: на реальных
+       реестрах это склеивало разные операторы (быстрые попадают в реестр не в каждом запуске).
     В реестр попадают только операторы, которые застала выборка, поэтому быстрые операторы бывают
     только в одном запуске и "поровну" выполняется не всегда."""
+    renamed = object_map(rows_a, rows_b)
+
+    def obj(r, side):
+        o = r["label"].lower()
+        return renamed[o][1].lower() if side == 0 and o in renamed else o
+
     def by_line(r):
         return r["line"]
 
-    def keyed(rows):
+    def keyed(rows, side):
         seen, out = collections.Counter(), {}
         for r in sorted(rows, key=by_line):
-            k = (r["label"].lower(), r["hash"])
+            k = (obj(r, side), r["hash"])
             out[k + (seen[k],)] = r
             seen[k] += 1
         return out
@@ -3381,17 +3430,18 @@ def statement_pairs(rows_a, rows_b):
     def prefix(r):
         return " ".join(r["head"].split()).casefold()[:STMT_PREFIX_LEN]
 
-    ka, kb = keyed(rows_a), keyed(rows_b)
-    pairs = [(ka[k], kb[k], "") for k in ka if k in kb]
+    ka, kb = keyed(rows_a, 0), keyed(rows_b, 1)
+    exact = [(ka[k], kb[k], "") for k in ka if k in kb]
+    pairs = list(exact)
     objects = {}
     for side, keyed_rows, other in ((0, ka, kb), (1, kb, ka)):
         for k, r in keyed_rows.items():
             if k not in other:
-                objects.setdefault(r["label"].lower(), ([], []))[side].append(r)
-    for obj, (la, lb) in objects.items():
+                objects.setdefault(k[0], ([], []))[side].append(r)
+    for o, (la, lb) in objects.items():
         # опорные точки: совпавшие операторы объекта, идущие в одном порядке в A и B
         anchors, last_b = [], -1
-        for a, b, _ in sorted((x for x in pairs if x[0]["label"].lower() == obj), key=lambda x: x[0]["line"]):
+        for a, b, _ in sorted((x for x in exact if obj(x[1], 1) == o), key=lambda x: x[0]["line"]):
             if b["line"] > last_b:
                 anchors.append((a["line"], b["line"]))
                 last_b = b["line"]
@@ -3403,21 +3453,21 @@ def statement_pairs(rows_a, rows_b):
         for ga, gb in gaps.values():
             ga.sort(key=by_line)
             gb.sort(key=by_line)
-            if len(ga) == len(gb):
-                pairs += [(a, b, " (текст изменен)") for a, b in zip(ga, gb)]
-                continue
             found = []
-            for a in ga:                       # на одной строке
-                b = next((b for b in gb if b["line"] == a["line"] and all(b is not y for _, y in found)), None)
-                if b is not None:
-                    found.append((a, b))
+
+            def free(x, side):
+                return all(x is not p[side] for p in found)
             for a in ga:                       # по началу текста, только однозначно
-                if any(a is x for x, _ in found) or len(prefix(a)) < STMT_PREFIX_LEN:
+                if not free(a, 0) or len(prefix(a)) < STMT_PREFIX_LEN:
                     continue
-                same_a = [x for x in ga if prefix(x) == prefix(a) and all(x is not y for y, _ in found)]
-                same_b = [y for y in gb if prefix(y) == prefix(a) and all(y is not z for _, z in found)]
+                same_a = [x for x in ga if prefix(x) == prefix(a) and free(x, 0)]
+                same_b = [y for y in gb if prefix(y) == prefix(a) and free(y, 1)]
                 if len(same_a) == 1 and len(same_b) == 1:
                     found.append((a, same_b[0]))
+            for a in [x for x in ga if free(x, 0)]:                       # на одной строке
+                b = next((b for b in gb if b["line"] == a["line"] and free(b, 1)), None)
+                if b is not None:
+                    found.append((a, b))
             pairs += [(a, b, " (текст изменен)") for a, b in found]
             used = {id(x) for pair in found for x in pair}
             pairs += [(a, None, " (нет в B)") for a in ga if id(a) not in used]
@@ -3425,16 +3475,17 @@ def statement_pairs(rows_a, rows_b):
     return pairs
 
 
-def statement_changes(rows_a, rows_b):
+def statement_changes(rows_a, rows_b, pairs=None):
     """Значимые изменения времени операторов, которые входят в верхние TOP_SHARE (не меньше TOP_MIN)
-    по времени в A или в B: [(строка A или None, строка B или None, пометка)] по убыванию разницы."""
+    по времени в A или в B: [(строка A или None, строка B или None, пометка)] по убыванию разницы.
+    pairs - уже готовые пары (сравнение реестров убирает из них операторы до начала наблюдения)."""
     def top(rows):
         n = max(TOP_MIN, math.ceil(TOP_SHARE * len(rows)))
         return {id(r) for r in sorted(rows, key=lambda r: -r["time"])[:n]}
 
     top_a, top_b = top(rows_a), top(rows_b)
     out = []
-    for a, b, note in statement_pairs(rows_a, rows_b):
+    for a, b, note in (statement_pairs(rows_a, rows_b) if pairs is None else pairs):
         if not ((a is not None and id(a) in top_a) or (b is not None and id(b) in top_b)):
             continue
         ta, tb = (a["time"] if a else 0), (b["time"] if b else 0)
@@ -3468,6 +3519,8 @@ def statements_block(ra, rb):
         return out + [both(e) for e in errs]
     if rows_a is None or rows_b is None:
         return out + [both(f"Реестр есть только в {'A' if rows_a is not None else 'B'}")]
+    for name_a, name_b, n in object_map(rows_a, rows_b).values():
+        out.append(both(f"Объект A {name_a} сопоставлен с объектом B {name_b} ({n} одинаковых операторов)"))
     changes = [statement_text(*x) for x in statement_changes(rows_a, rows_b)]
     if not changes:
         out.append(both("нет"))
@@ -3476,6 +3529,200 @@ def statements_block(ra, rb):
     if len(changes) > SHORT_CHANGES_MAX:
         out.append((None, f"и еще {len(changes) - SHORT_CHANGES_MAX} в полном отчете"))
     return out
+
+
+# ============================================================ режим 2: сравнение двух реестров (наблюдений)
+
+def registry_dir(arg):
+    """Папка реестра (--session или --profile), если arg - она или ее registry.txt; иначе None."""
+    p = Path(arg)
+    if p.is_dir() and (p / REGISTRY_FILE).is_file():
+        return p
+    if p.is_file() and p.name.lower() == REGISTRY_FILE:
+        return p.parent
+    return None
+
+
+def read_seen(folder, rows):
+    """Первое и последнее время сервера выполнения каждого оператора по log.csv:
+    ({id(строки реестра): (первое, последнее)}, строка реестра первого отрезка журнала).
+    Оператор журнала находится в реестре по объекту, строке и началу текста. Журнала нет - ({}, None)."""
+    try:
+        lines = (folder / REGISTRY_LOG).read_text(encoding="utf-8-sig").split("\n")
+        header = parse_line(lines[0])
+    except (OSError, UnicodeDecodeError, IndexError, ValueError):
+        return {}, None
+    by_key = collections.defaultdict(list)
+    for r in rows:
+        by_key[(r["label"].lower(), r["line"], r["head"].strip())].append(r)
+    seen, first = {}, None
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        try:
+            d = dict(zip(header, parse_line(line)))
+            t, k = d["Время сервера"], (d["Объект"].lower(), int(d["Строка"]), (d.get("Начало текста") or "").strip())
+        except (KeyError, ValueError):
+            continue
+        for r in by_key.get(k, ()):
+            f, last = seen.get(id(r), (t, t))
+            seen[id(r)] = (min(f, t), max(last, t))
+            if first is None or t < first[0]:
+                first = (t, r)
+    return seen, first and first[1]
+
+
+def before_start(pairs, seen, late, early):
+    """Операторы стороны early, выполненные целиком до начала наблюдения стороны late.
+
+    Сторона late подключилась позже, если первый оператор, который она застала, в стороне early
+    начался не сразу. Все, что early выполнила только раньше этого места и чего нет в late, late не
+    могла увидеть - это не изменение. Берется самый ранний общий оператор late, а в early - его первое
+    выполнение: в цикле граница сдвигается раньше, то есть исключается меньше, а не больше.
+    Возвращает (строка-граница или None, [исключенные строки early])."""
+    common = [p for p in pairs if p[0] is not None and p[1] is not None
+              and id(p[late]) in seen[late] and id(p[early]) in seen[early]]
+    if not common:
+        return None, []
+    edge = min(common, key=lambda p: seen[late][id(p[late])][0])
+    t = seen[early][id(edge[early])][0]
+    out = [p[early] for p in pairs if p[late] is None and id(p[early]) in seen[early]
+           and seen[early][id(p[early])][1] < t]
+    return edge[early], out
+
+
+def registry_head(folder):
+    """Строки шапки registry.txt, нужные в сравнении: заголовок, исходный запрос, начало наблюдения."""
+    try:
+        lines = (folder / REGISTRY_FILE).read_text(encoding="utf-8-sig").split("\n")
+    except (OSError, UnicodeDecodeError):
+        return []
+    keep = ("# ", "Исходный запрос", "Начало наблюдения", "Время по выборкам")
+    return [x.strip().lstrip("# ") for x in lines if x.startswith(keep)][:4]
+
+
+def objects_block(pairs, renamed):
+    """Время по объектам: [{"name", "a", "b", "significant"}], сначала самые долгие. Объект A
+    переименованной копии - под именем B. Устойчиво и при другом алгоритме внутри объекта: операторы
+    не нужны."""
+    ta, tb, names = collections.Counter(), collections.Counter(), {}
+    for a, b, _ in pairs:
+        for side, r, total in ((0, a, ta), (1, b, tb)):
+            if r is None:
+                continue
+            o = r["label"].lower()
+            if side == 0 and o in renamed:
+                o = renamed[o][1].lower()
+            if side == 1:
+                names[o] = r["label"]
+            else:
+                names.setdefault(o, r["label"])
+            total[o] += r["time"]
+    out = []
+    for o in sorted(names, key=lambda o: -max(ta[o], tb[o])):
+        a, b = ta[o], tb[o]
+        d = abs(b - a)
+        out.append({"name": names[o], "a": a, "b": b,
+                    "significant": d >= SIGNIFICANT_MS and not (a and d * 100 < SIGNIFICANT_PCT * a)})
+    return out
+
+
+def object_text(x):
+    return f"{x['name']}: {x['a']} -> {x['b']} мс ({pct_text(x['a'], x['b'])})"
+
+
+def runs_text(a, b):
+    """Число запусков (возвратов к оператору): при цикле и позднем начале наблюдения оно разное,
+    и сумма времени меняется без изменения самого оператора."""
+    ra, rb = (a["runs"] if a else 0), (b["runs"] if b else 0)
+    if not (ra or rb) or (ra == rb == 1):
+        return ""
+    per = [f"{r['time'] // r['runs']}" if r and r["runs"] else "-" for r in (a, b)]
+    return f", запусков {ra} -> {rb} (на запуск {per[0]} -> {per[1]} мс)"
+
+
+def registry_compare(dir_a, dir_b):
+    """Сравнение двух реестров операторов (наблюдений --session или запусков --profile); его
+    показывают и файл сравнения, и GUI. Возвращает словарь:
+    rows - строки реестров A и B; notes - строки пояснений [(полная, сокращенная или None)];
+    total - время общей части A и B; objects - objects_block; changes - statement_changes."""
+    rows = []
+    for d, lbl in ((dir_a, "A"), (dir_b, "B")):
+        r, err = read_registry({"run": {"Реестр": REGISTRY_FILE}, "dir": d, "label": lbl})
+        if r is None:
+            raise ScriptError(err or f"Реестр {lbl} не найден: {d}")
+        rows.append(r)
+    notes = []
+    renamed = object_map(rows[0], rows[1])
+    for name_a, name_b, n in renamed.values():
+        notes.append(both(f"Объект A {name_a} сопоставлен с объектом B {name_b} ({n} одинаковых операторов)"))
+    pairs = statement_pairs(rows[0], rows[1])
+    seen, firsts = zip(read_seen(dir_a, rows[0]), read_seen(dir_b, rows[1]))
+    dropped = []
+    if not (seen[0] and seen[1]):
+        notes.append(both("Журнала выполнения (log.csv) нет: начало наблюдений не выравнивалось"))
+    else:
+        for late, early in ((1, 0), (0, 1)):
+            edge, cut = before_start(pairs, seen, late, early)
+            if cut:
+                L, E = "AB"[late], "AB"[early]
+                notes.append(both(f"Наблюдение {L} началось позже: не учитываются операторы {E} ({len(cut)}), "
+                                  f"выполненные только до {edge['label']}, стр. {edge['line']}"))
+                notes += [(f"  {r['label']}, стр. {r['line']}: {r['time']} мс", None) for r in cut]
+                dropped += cut
+    for lbl, r in zip("AB", firsts):
+        if r is not None:
+            notes.append(both(f"Первый оператор наблюдения {lbl}: {r['label']}, стр. {r['line']} - "
+                              "его время может быть неполным (начало могло пройти до подключения)"))
+    gone = {id(r) for r in dropped}
+    pairs = [p for p in pairs if not any(r is not None and id(r) in gone for r in p[:2])]
+    return {"rows": rows, "notes": notes,
+            "total": [sum(r["time"] for r in rs if id(r) not in gone) for rs in rows],
+            "objects": objects_block(pairs, renamed),
+            "changes": statement_changes(rows[0], rows[1], pairs)}
+
+
+def run_registry_compare(dir_a, dir_b):
+    """Сравнение двух реестров без таблиц: файлы <B>__<A>_compare_<время>.txt и _short.txt рядом с папкой B."""
+    Events.emit("start", mode="compare", a=str(dir_a.resolve()), b=str(dir_b.resolve()))
+    started = dt.datetime.now()
+    c = registry_compare(dir_a, dir_b)
+    out = [both("# Сравнение реестров операторов")]
+    for lbl, d in (("A", dir_a), ("B", dir_b)):
+        out.append(both(f"{lbl}: {d.name}"))
+        out += [(f"  {x}", None) for x in registry_head(d)]
+    out += c["notes"]
+    out.append(both(f"Время по выборкам (общая часть): {c['total'][0]} -> {c['total'][1]} мс ({pct_text(*c['total'])})"))
+
+    # полный отчет - все объекты, сокращенный - только значимые изменения
+    out += [both(""), both(f"# Объекты: время (в сокращенном - изменения от {SIGNIFICANT_PCT}% и {SIGNIFICANT_MS} мс)")]
+    out += [(object_text(x), object_text(x) if x["significant"] else None) for x in c["objects"]]
+    if not c["objects"]:
+        out.append(both("нет"))
+    elif not any(x["significant"] for x in c["objects"]):
+        out.append((None, "нет"))
+
+    out += [both(""), both(f"# Операторы: значимые изменения времени (от {SIGNIFICANT_PCT}% и {SIGNIFICANT_MS} мс)")]
+    changes = [statement_text(*x) + runs_text(x[0], x[1]) for x in c["changes"]]
+    if not changes:
+        out.append(both("нет"))
+    for i, s in enumerate(changes):
+        out.append((s, s if i < SHORT_CHANGES_MAX else None))
+    if len(changes) > SHORT_CHANGES_MAX:
+        out.append((None, f"и еще {len(changes) - SHORT_CHANGES_MAX} в полном отчете"))
+
+    full = "\n".join(f for f, _ in out if f is not None) + "\n"
+    short = "\n".join(s for _, s in out if s is not None) + "\n"
+    out_dir = Path(OUTPUT_DIR) if OUTPUT_DIR else dir_b.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{dir_b.name}__{dir_a.name}_compare_{started.strftime(DT_FORMAT)}"
+    path = unique_path(out_dir / f"{stem}{REPORT_EXT}")
+    write_report(path, full)
+    path_short = unique_path(out_dir / f"{stem}_short{REPORT_EXT}")
+    write_report(path_short, short, short)
+    log(f"Полный отчет: {path}")
+    log(f"Сокращенный отчет: {path_short}")
+    return 0
 
 
 def run_line(label, r):
@@ -3600,6 +3847,12 @@ def dispatch(parser, args):
         if len(args.files) == 1:
             return run_mode1(args.files[0], args.rollback, args.repeat or 1, args.profile), None
         if len(args.files) == 2 and not (args.rollback or args.repeat or args.profile):
+            dirs = [registry_dir(x) for x in args.files]
+            if all(dirs):
+                return run_registry_compare(*dirs), None
+            if any(dirs):
+                raise ScriptError("сравниваются два отчета или две папки реестров (наблюдения --session, "
+                                  "запуски --profile), не отчет с папкой")
             return run_mode2(args.files[0], args.files[1]), None
         parser.print_help(sys.stderr)
         return 2, "неверные аргументы"

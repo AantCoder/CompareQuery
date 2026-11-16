@@ -14,10 +14,12 @@ GUI читает файлы запусков и CompareQuery.json и запус�
 import csv
 import ctypes
 import datetime as dt
+import glob
 import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -228,7 +230,8 @@ def read_report(path):
             f = cq.fields(lines)
             out["summary"] = {k: cq.int_value(f.get(name)) for k, name in (
                 ("time", "Время"), ("client", "Ожидание клиента"), ("cpu", "CPU"),
-                ("reads", "Логических чтений"), ("phys", "Физических чтений"), ("rows", "Всего строк"))}
+                ("reads", "Логических чтений"), ("phys", "Физических чтений"), ("rows", "Всего строк"),
+                ("total", "Общее время запуска"))}
         elif title.startswith("Предложение для настроек"):
             out["suggestion"] = "\n".join(lines).strip()
     return out
@@ -259,8 +262,16 @@ def same_data(a, b):
         y = b["tables"].get(n)
         if y is None or x["rows"] != y["rows"]:
             return False
-        if x["ignored"] == y["ignored"] and x["hash"] == y["hash"]:
+        if [c.lower() for c in x["names"]] != [c.lower() for c in y["names"]]:
+            return False        # другой состав или порядок колонок - режим 2 считает таблицу отличающейся
+        if x["ignored"] == y["ignored"]:
+            # Хэш таблицы - по строкам целиком; хэши колонок его не заменяют: значения могут совпасть
+            # по каждой колонке, а строки из них сложиться разные (раньше при разном хэше таблицы
+            # сравнивались хэши колонок, и итог расходился с режимом 2).
+            if x["hash"] != y["hash"]:
+                return False
             continue
+        # настройки игнорируемых колонок разные: хэш таблицы несравним, остаются хэши колонок (приближенно)
         ign = {c.lower() for c in x["ignored"] + y["ignored"]}
         ca = {k.lower(): v for k, v in x["cols"].items() if k.lower() not in ign}
         cb = {k.lower(): v for k, v in y["cols"].items() if k.lower() not in ign}
@@ -469,6 +480,7 @@ class Api:
 
     def __init__(self):
         self._lock = threading.Lock()
+        self._gui_lock = threading.Lock()
         self._events = []          # (номер, id процесса, событие)
         self._procs = {}
         self._next = 1
@@ -496,10 +508,13 @@ class Api:
         return raw, (g if isinstance(g, dict) else {})
 
     def _set_gui(self, **values):
-        raw, g = self._gui()
-        g.update(values)
-        raw["GUI"] = g
-        write_json(raw)
+        # под блокировкой: два вызова интерфейса подряд (язык и опорный запуск) писали файл одновременно,
+        # и один из них падал с Permission denied или терял изменение другого
+        with self._gui_lock:
+            raw, g = self._gui()
+            g.update(values)
+            raw["GUI"] = g
+            write_json(raw)
 
     def _path(self, rel):
         """Путь внутри рабочей папки (защита от выхода за нее)."""
@@ -553,6 +568,7 @@ class Api:
                 continue
             stem = m.group("stem")
             run = {"report": p.name, "ts": m.group("ts"), "aborted": r["aborted"], "time": r["summary"].get("time"),
+                   "total": r["summary"].get("total"),
                    "repeat": r["run"].get("Прогонов"), "profile": bool(r["run"].get("Реестр")),
                    "mode": r["run"].get("Режим"), "note": (g.get("notes") or {}).get(p.name)}
             if ref_report is not None and p.name != ref:
@@ -570,13 +586,15 @@ class Api:
         for p in (sdir.iterdir() if sdir.is_dir() else []):
             m = SESSION_DIR_RE.match(p.name)
             if m and p.is_dir():
-                sessions.append({"folder": p.name, "spid": int(m.group("spid")), "ts": m.group("ts")})
+                sessions.append({"folder": p.name, "spid": int(m.group("spid")), "ts": m.group("ts"),
+                                 "note": (g.get("notes") or {}).get(p.name)})
         sessions.sort(key=lambda x: x["folder"], reverse=True)
         return {"folder": self.folder, "folder_name": folder.name or self.folder,
                 "connection": {"server": conn_value(cs, "server"), "database": conn_value(cs, "database"),
                                "login": raw.get("login") or "", "has_password": bool(raw.get("password")),
                                "connection_string": cs},
                 "reference": ref, "scripts": list(scripts.values()), "sessions": sessions,
+                "session_reference": g.get("session_reference"),
                 "params": g.get("params") or {}, "collapsed": g.get("collapsed") or [],
                 "columns": g.get("columns") or {}, "tcollapsed": g.get("tcollapsed") or {}, "diff_tool": g.get("diff_tool") or "",
                 "diff_found": (find_diff_tool(g.get("diff_tool")) or {}).get("name"),
@@ -705,8 +723,27 @@ class Api:
             set_lang(value)
         return True
 
+    def set_note(self, key, text):
+        """Заметка к запуску (имя отчета) или наблюдению (имя папки); пустой текст - удалить."""
+        old = self._gui()[1].get("notes") or {}
+        notes = dict(old)
+        text = str(text or "").strip()
+        if (old.get(key) or "") == text:
+            return True
+        if text:
+            notes[key] = text
+        else:
+            notes.pop(key, None)
+        self._set_gui(notes=notes)
+        return True
+
     def set_reference(self, report):
         self._set_gui(reference=report)
+        return True
+
+    def set_session_reference(self, folder):
+        """Опорное наблюдение (имя папки в Sessions_profile или None) - отдельно от опорного запуска."""
+        self._set_gui(session_reference=folder)
         return True
 
     # ---------------------------------------------------- скрипты
@@ -732,7 +769,8 @@ class Api:
         p.write_bytes(text.encode(enc))
         return True
 
-    def new_script(self, name):
+    def new_script(self, name, source=None):
+        """Новый пустой скрипт; source - имя скрипта, текст которого скопировать."""
         name = name.strip()
         if not name.lower().endswith(".sql"):
             name += ".sql"
@@ -741,8 +779,26 @@ class Api:
         p = self._path(name)
         if p.exists():
             raise ValueError(tr("файл уже есть: {name}", name=name))
-        p.write_text("", encoding="utf-8")
+        if source:
+            shutil.copyfile(self._path(Path(source).name), p)
+        else:
+            p.write_text("", encoding="utf-8")
         return name
+
+    def delete_script(self, name, with_runs=False):
+        """Файл скрипта - в корзину. with_runs - и все его запуски (как delete_run: отчет, CSV, реестр,
+        файлы сравнения) вместе с подпапкой данных скрипта."""
+        p = self._path(Path(name).name)
+        if with_runs:
+            for r in list(Path(self.folder).glob("*.txt")):
+                m = REPORT_RE.match(r.name)
+                if m and "_compare_" not in r.name and m.group("stem").lower() == p.stem.lower():
+                    self.delete_run(r.name)
+            data = p.with_suffix("")
+            if data.is_dir():
+                to_recycle_bin([data])
+        to_recycle_bin([p])
+        return True
 
     # ---------------------------------------------------- запуски
 
@@ -789,7 +845,8 @@ class Api:
                 diff = [n for n in r["tables"] if not same_data({"tables": {n: r["tables"][n]}},
                                                                 {"tables": {n: rr["tables"][n]}})] if ok else []
                 out["reference"] = {"report": ref, "summary": rr["summary"], "comparable": ok, "why": why,
-                                    "same": not diff if ok else None, "diff_tables": diff}
+                                    "same": not diff if ok else None, "diff_tables": diff,
+                                    "compared": self.compare_cached(ref, report) is not None}
         out["note"] = (g.get("notes") or {}).get(report)
         out["line"] = self._lineage(report, g)
         return out
@@ -913,6 +970,14 @@ class Api:
         """Сравнение отчетов a (база) и b (проверяемый): процесс CLI, итог - в файлах сравнения."""
         return self._start("compare", [a, b], f"{a} ↔ {b}")
 
+    def compare_cached(self, a, b):
+        """Готовый файл сравнения отчетов a и b (последний) или None. Отчеты запусков не меняются,
+        поэтому сравнение той же пары повторять незачем (GUI.md §6.7)."""
+        stem = f"{Path(b).stem}__{Path(a).stem}_compare_"
+        files = [p for p in Path(self.folder).glob(glob.escape(stem) + "*.txt")
+                 if COMPARE_RE.match(p.name) and not p.stem.endswith("_short")]
+        return max(files, key=lambda p: p.name).name if files else None
+
     def compare_text(self, path):
         p = Path(path)
         short = p.with_name(p.stem + "_short.txt")
@@ -972,6 +1037,36 @@ class Api:
                     st["files_a"], st["files_b"] = files(ar, regs[0][1]), files(br, regs[1][1])
                     out["statements"].append(st)
         return out
+
+    def compare_sessions(self, a, b):
+        """Сравнение наблюдений a (база) и b (по имени папки в Sessions_profile): процесс CLI с двумя папками."""
+        da, db = (self._path(Path(cq.SESSIONS_DIR) / Path(x).name) for x in (a, b))
+        return self._start("compare", [str(da), str(db)], f"{da.name} ↔ {db.name}")
+
+    def session_compare_details(self, a, b):
+        """Экран сравнения наблюдений (GUI.md §4.3): то же, что файл сравнения (cq.registry_compare),
+        с началом текста, первым ожиданием B и файлами текста и плана оператора в каждом наблюдении."""
+        da, db = (self._path(Path(cq.SESSIONS_DIR) / Path(x).name) for x in (a, b))
+        c = cq.registry_compare(da, db)
+
+        def files(r, d):
+            row = r["row"] if r else {}
+            return [str(d / row[k]) if row.get(k) else None for k in ("Текст", "План")]
+        statements = []
+        for ar, br, note in c["changes"]:
+            r = br or ar
+            m = STMT_RE.match(cq.statement_text(ar, br, note))
+            st = {k: (int(v) if v and v.isdigit() else v) for k, v in m.groupdict().items()} if m else                 {"label": r["label"], "line": r["line"], "note": note, "a": 0, "b": 0, "pct": ""}
+            st["text"] = r["head"]
+            st["wait"] = (br["row"].get("Ожидание ресурсов 1 место") if br else "") or ""
+            st["files_a"], st["files_b"] = files(ar, da), files(br, db)
+            st["runs_a"], st["runs_b"] = (ar["runs"] if ar else 0), (br["runs"] if br else 0)
+            statements.append(st)
+        g = self._gui()[1].get("notes") or {}
+        return {"total": c["total"], "notes": [f for f, _ in c["notes"]], "objects": c["objects"],
+                "statements": statements, "names": [da.name, db.name],
+                "heads": [registry_header(d / cq.REGISTRY_FILE) for d in (da, db)],
+                "note_text": [g.get(da.name), g.get(db.name)]}
 
     # ---------------------------------------------------- внешний diff (GUI.md §5.5)
 
@@ -1257,7 +1352,9 @@ class Api:
     def read_text(self, path):
         """Текстовый файл внутри рабочей папки (текст оператора реестра) - для окна текста."""
         p = self._path(path)
-        return {"text": p.read_text(encoding="utf-8-sig", errors="replace")}
+        plan = p.with_suffix(".sqlplan")
+        return {"text": p.read_text(encoding="utf-8-sig", errors="replace"),
+                "plan": str(plan) if plan.is_file() else None}
 
     def open_text(self, name, text):
         """Текст запроса - во временный .sql и открыть программой по умолчанию."""
@@ -1278,6 +1375,8 @@ class Api:
     def delete_session(self, name):
         """Наблюдение - его папка в Sessions_profile - в корзину (GUI.md §6.5)."""
         to_recycle_bin([self._path(Path(cq.SESSIONS_DIR) / Path(name).name)])
+        if self._gui()[1].get("session_reference") == Path(name).name:
+            self._set_gui(session_reference=None)
         return True
 
     def notify(self, title, text):
@@ -1307,7 +1406,8 @@ class Api:
         d = self._path(Path(cq.SESSIONS_DIR) / Path(name).name)
         h = registry_header(d / cq.REGISTRY_FILE)
         return {"folder": str(d), "header": h, "registry": read_csv_rows(d / cq.REGISTRY_TABLE)[1],
-                "log": read_csv_rows(d / cq.REGISTRY_LOG)[1], "slow": slow_info(h)}
+                "log": read_csv_rows(d / cq.REGISTRY_LOG)[1], "slow": slow_info(h),
+                "note": (self._gui()[1].get("notes") or {}).get(d.name)}
 
     # ---------------------------------------------------- внешние действия
 

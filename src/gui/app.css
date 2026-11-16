@@ -19,7 +19,7 @@ button{font:inherit}
 .ctx .t b{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ctx .t span{font-size:12px;color:#6E788B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ctx>svg{color:#485264;flex-shrink:0}
-.tree{display:flex;flex-direction:column;gap:1px;overflow-y:auto;min-height:0;flex:0 1 auto;margin:0 -4px;padding:0 4px}
+.tree{display:flex;flex-direction:column;gap:1px;overflow-y:auto;overflow-x:hidden;min-height:0;flex:0 1 auto;margin:0 -4px;padding:0 4px}
 .ti{display:flex;align-items:center;gap:8px;min-height:32px;padding:0 8px;border-radius:8px;color:#1B2230;font-size:13px;cursor:pointer;flex-shrink:0}
 .ti:hover{background:#F1F3F8}
 .ti.s{font-size:14px;font-weight:600;margin-top:6px}
@@ -50,7 +50,7 @@ button{font:inherit}
 .abt{font-size:11.5px;color:#B45309;opacity:.9}
 .pairbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:-4px;padding:6px 6px 6px 12px;border-radius:12px;background:#EEF2FD;border:1px solid #C9D3F5;font-size:13px;font-weight:600;color:#2F4AC0;flex-shrink:0}
 .hint{flex:1;display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:flex-start;padding-top:10px;text-align:center;padding:0 22px;font-size:13px;line-height:1.55;color:#1B2230;opacity:.55;min-height:0;overflow:hidden}
-.menu{display:flex;flex-direction:column;gap:1px;border-top:1px solid #E3E7EF;padding-top:10px;flex-shrink:0}
+.menu{display:flex;flex-direction:column;gap:1px;border-top:1px solid #E3E7EF;padding-top:10px;flex-shrink:0;margin-top:auto}   /* всегда у низа панели */
 .menu .m{font-size:12px;color:#1B2230;opacity:.58;padding:0 8px 4px}
 .menu a{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;color:#1B2230;font-size:14px;font-weight:500;cursor:pointer}
 .menu a:hover{background:#F1F3F8}
@@ -183,7 +183,10 @@ pre.hl{margin:0;overflow:hidden;pointer-events:none;color:#2D3646}
 .k-A .dk{background:#FDE7DC;color:#9A3412}
 .k-B .dk{background:#E6F5EE;color:#17714A}
 .t .old{color:#9A3412;text-decoration:line-through;text-decoration-color:rgba(154,52,18,.45)}
-.t .new{color:#17714A;font-weight:600}
+.t .new{color:#17714A}          /* не жирный: ширина букв как у старого значения */
+.t td.dd2 span{display:block;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px;white-space:pre}
+.t td.dd2 .old{text-decoration:none}    /* две строки буква под буквой - зачеркивание мешало бы сравнивать */
+.t td.dd1{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px}
 .dmore{padding:8px 20px 12px;font-size:12px;color:#6E788B;border-top:1px solid #EEF1F6}
 .noteed{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:4px 10px 4px 8px;margin-left:-8px;border-radius:8px;font-size:14px;color:#2D3646;cursor:text;outline:none;min-width:120px}
 .noteed:hover,.noteed:focus-within{background:#F1F3F8}
@@ -278,6 +281,8 @@ select.inp{appearance:auto;cursor:pointer}
 .t.srv td{vertical-align:middle}
 .t.srv th.hot{color:#2F4AC0}
 .t .acts2{white-space:nowrap;padding-right:6px}
+.t td.acts2.tight,.t th.tight{padding-left:1px;padding-right:1px}   /* колонки кнопок «опорный / этот» - вплотную */
+.t td.op.wide .sv{max-width:460px}
 .t .acts2 .ib{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:7px;color:#485264;cursor:pointer}
 .t .acts2 .ib:hover{background:#EBEFFD;color:#2F4AC0}
 .t .acts2 .ib.danger:hover{background:#FDE7DC;color:#B42318}
@@ -312,7 +317,7 @@ input.inp:focus,textarea.inp:focus{border-color:#3B5BDB;box-shadow:0 0 0 3px rgb
 .ctxm hr{border:none;border-top:1px solid #EEF1F6;margin:3px 0}
 /* свернутая таблица (длинный журнал) */
 /* заметка запуска в панели: после значка курсивом, сколько поместится */
-.ti.r .ntx{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;font-size:12px;color:#485264;font-weight:400}
+.ti.r .ntx{margin-left:6px;flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;font-size:12px;color:#485264;font-weight:400}
 
 /* полоса прогресса нескольких прогонов: участок текущего прогона светлее, по нему бегает ползунок */
 .track .seg{position:absolute;top:0;bottom:0;background:#CBD6FB;border-radius:0 5px 5px 0;overflow:hidden}
@@ -343,3 +348,49 @@ input.inp:focus,textarea.inp:focus{border-color:#3B5BDB;box-shadow:0 0 0 3px rgb
 .t th .opl .runs:hover{color:#2F4AC0}
 /* пустое место кнопки (нет файла): кнопки столбца стоят ровно */
 .acts2 .ib.off{visibility:hidden}
+/* оценка выполнения по похожему запуску - мелко под временем прогона */
+.eta{font-size:12.5px;color:#6E788B;font-variant-numeric:tabular-nums;white-space:nowrap;cursor:default}
+/* окно игнорируемых колонок: предупреждение, что правка действует только на новые запуски */
+.igwarn{padding:10px 14px;border-radius:10px;background:#FFF6E5;border:1px solid #F3D9A4;color:#7A4A06;font-size:13px;line-height:1.45}
+.findbox{position:fixed;top:50px;right:18px;z-index:50;display:flex;align-items:center;gap:4px;padding:6px 8px;background:#fff;border:1px solid #D5DAE3;border-radius:10px;box-shadow:0 6px 20px rgba(20,30,50,.15)}
+.findbox input{width:240px;border:1px solid #D5DAE3;border-radius:7px;padding:5px 8px;font-size:13px}
+.findbox .fcnt{min-width:58px;text-align:center;font-size:12px;color:#6E788B}
+.findbox .ib{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:7px;cursor:pointer;font-size:17px;color:#485264}
+.findbox .ib:hover{background:#EBEFFD;color:#2F4AC0}
+#main .fhit>td,#main .trow.fhit{background:#FFF3C4}
+#main .fcur>td,#main .trow.fcur{background:#FFD866}
+
+/* вкладки основной области (§5.24): узкие, под самым верхом, ширина постоянная */
+.mainwrap{flex:1 1 0;min-width:0;height:100vh;display:flex;flex-direction:column}
+.mainwrap>.main{height:auto;flex:1 1 0;min-height:0}
+.tabs{display:flex;align-items:flex-end;gap:2px;padding:5px 12px 0;border-bottom:1px solid #E3E7EF;flex-shrink:0;overflow:hidden}
+.tabs .tback,.tabs .tab{width:170px;height:26px;box-sizing:border-box;display:inline-flex;align-items:center;gap:6px;padding:0 8px;font-size:12px;color:#6E788B;border-radius:7px 7px 0 0;cursor:pointer;flex-shrink:1;min-width:60px}
+.tabs .tback{width:110px;margin-right:10px;font-weight:500}
+.tabs .tback:hover{color:#2F4AC0}
+.tabs .tback.off{opacity:.4;cursor:default;color:#6E788B}
+.tabs .tab:hover{background:rgba(255,255,255,.6)}
+.tabs .tab.on{background:#fff;color:#1B2230;border:1px solid #E3E7EF;border-bottom-color:#fff;margin-bottom:-1px}
+.tabs .tic{display:inline-flex;width:14px;justify-content:center;color:#9AA3B2;flex-shrink:0}
+.tabs .tnm{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.tabs .tx{visibility:hidden;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;font-size:14px;color:#6E788B;flex-shrink:0}
+.tabs .tab:hover .tx{visibility:visible}
+.tabs .tx:hover{background:#E3E7EF;color:#1B2230}
+.tabs .tadd{width:26px;height:24px;display:inline-flex;align-items:center;justify-content:center;color:#9AA3B2;cursor:pointer;border-radius:6px;margin-left:4px;flex-shrink:0}
+.tabs .tadd:hover{color:#2F4AC0;background:rgba(255,255,255,.6)}
+.tmore{display:flex;align-items:center;gap:12px;font-size:12px}
+.tmore:not(:empty){padding:10px 14px}
+
+/* путь рабочей папки - в правом верхнем углу экрана, над шапкой: заголовок экрана стоит выше */
+.head{position:relative}
+.head .ctxl{position:absolute;right:0;top:-21px;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.t .acts2 .ib.ctxonly{display:none}                       /* действие только для контекстного меню строки */
+.dlg .df .ib.dis{opacity:.35;cursor:default}
+.chip.link{cursor:pointer}
+.chip.link:hover{filter:brightness(.94)}
+.star.ab{font-size:12px;font-weight:700;color:#2F4AC0}   /* A и B экрана сравнения в дереве */
+.tw.tcl{cursor:pointer}                         /* свернутая карточка разворачивается кликом */
+.tw.tbusy .tcol svg{display:none}
+.tw.tbusy .tcol::after{content:"";width:14px;height:14px;box-sizing:border-box;border-radius:50%;border:2px solid #D5DAE3;border-top-color:#3B5BDB;animation:tspin .8s linear infinite;will-change:transform}
+@keyframes tspin{to{transform:rotate(360deg)}}
+/* идет наблюдение: реестр и журнал лежат в общем блоке - отступ между ними как между карточками экрана */
+#s-tables{display:flex;flex-direction:column;gap:20px}
