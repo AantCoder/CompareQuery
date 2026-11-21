@@ -55,24 +55,6 @@ button{font:inherit}
 .menu a{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;color:#1B2230;font-size:14px;font-weight:500;cursor:pointer}
 .menu a:hover{background:#F1F3F8}
 .menu svg{color:#485264}
-/* плашки «Новое наблюдение» (§5.9): крупная строка ужимается шрифтом, мелкая - перенос по словам, лишнее
-   обрезается; кнопки «+» и «обновить» и значок правки видны при наведении */
-.tiles{position:relative;grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
-.tile{position:relative;height:142px;box-sizing:border-box;overflow:hidden}
-.tile .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:22px;flex-shrink:0}
-.tvals{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;margin-top:4px;gap:1px}
-.tvals .tb{font-size:24px;font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden;font-variant-numeric:tabular-nums}
-.tvals .tb + .tb{font-size:19px}
-.tvals .ts{font-size:12px;line-height:1.35;color:#1B2230;opacity:.65;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
-.tvals .ts.one{-webkit-line-clamp:1;white-space:nowrap;text-overflow:ellipsis;display:block}
-.tvals .ts.err{color:#B42318;opacity:.85}
-.tile .tedit{position:absolute;top:10px;right:10px;opacity:0;transition:opacity .15s;color:#485264;cursor:pointer}
-.tile:hover .tedit{opacity:1}
-.tiles .tacts{position:absolute;top:50%;right:-17px;transform:translateY(-50%);display:flex;flex-direction:column;gap:6px;opacity:0;transition:opacity .15s;z-index:2}
-.tiles:hover .tacts,.tiles .tacts:hover{opacity:1}
-.tiles .tacts .ib{background:#FFF;border:1px solid #DCE1EA;border-radius:50%;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:#2F4AC0;box-shadow:0 2px 6px rgba(16,24,40,.12)}
-.tiles .tacts .ib:hover{border-color:#9FB2F2}
-textarea.tsql{height:220px;padding:10px 12px;resize:vertical;font-size:13px;line-height:1.5;white-space:pre;display:block}
 
 /* баллон «Для начала задайте подключения к базе» у кнопки подключения (как подсказки диалогов) */
 .ctip{position:fixed;z-index:80;max-width:260px;padding:10px 14px;border-radius:10px;background:#1B2230;color:#FFF;font-size:13px;line-height:1.45;box-shadow:0 10px 26px rgba(16,24,40,.25);animation:ctipin .2s ease-out}
@@ -80,6 +62,11 @@ textarea.tsql{height:220px;padding:10px 12px;resize:vertical;font-size:13px;line
 @keyframes ctipin{from{opacity:0;transform:translateX(6px)}to{opacity:1;transform:none}}
 
 /* результат «Проверить» в настройках подключения */
+.cndrv{display:flex;gap:8px;align-items:center}
+.cndrv select.inp{height:30px;flex:1;min-width:0;padding:0 8px;border-radius:8px;font-size:13px}
+.dbk{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:7px;font-size:12px;font-weight:600;white-space:nowrap}
+.dbk.ms{background:#FDECEC;color:#B42318}
+.dbk.pg{background:#E6EEF8;color:#2F5D8C}
 .cnres{font-size:12.5px;color:#485264;min-width:0;overflow-wrap:anywhere}
 .cnres.ok{color:#17714A;font-weight:600}
 .cnres.err{color:#B42318}
@@ -226,6 +213,12 @@ pre.rep{margin:0;padding:16px 20px;font:12.5px/1.55 "JetBrains Mono",ui-monospac
 .fl{display:inline-flex;align-items:center;gap:8px;height:34px;width:260px;box-sizing:border-box;padding:0 8px 0 10px;border:1px solid #DCE1EA;border-radius:9px;background:#FFF}
 .fl:focus-within{border-color:#3B5BDB;box-shadow:0 0 0 3px rgba(59,91,219,.12)}
 .fl input{border:none;outline:none;font:500 13px Inter,sans-serif;flex:1;min-width:0;background:transparent}
+/* заполненный фильтр: зеленая рамка с легким свечением; у текстового - крестик очистки */
+.fl:has(input:not(:placeholder-shown)),select.inp.flt.set{border-color:#37B24D;box-shadow:0 0 0 3px rgba(55,178,77,.13),0 0 10px rgba(55,178,77,.2)}
+.flx{display:none;flex:0 0 16px;height:16px;align-items:center;justify-content:center;border-radius:50%;background:#C3CAD6;color:#FFF;font:700 12px/1 Inter,sans-serif;cursor:pointer}
+.flx:hover{background:#6E788B}
+.fl:has(input:not(:placeholder-shown)) .flx{display:inline-flex;animation:flxin .15s ease-out}
+@keyframes flxin{from{transform:scale(.3);opacity:0}}
 mark{background:#FDEFC7;color:inherit;border-radius:3px;padding:0 1px}
 .empty{padding:28px 20px;text-align:center;color:#6E788B;font-size:13px}
 
@@ -379,6 +372,7 @@ input.inp:focus,textarea.inp:focus{border-color:#3B5BDB;box-shadow:0 0 0 3px rgb
 .tabs .tadd:hover{color:#2F4AC0;background:rgba(255,255,255,.6)}
 .tmore{display:flex;align-items:center;gap:12px;font-size:12px}
 .tmore:not(:empty){padding:10px 14px}
+.tmore.stick{position:sticky;left:0;width:max-content}      /* под таблицей srvTable внутри прокрутки - не уезжает вбок */
 
 /* путь рабочей папки - в правом верхнем углу экрана, над шапкой: заголовок экрана стоит выше */
 .head{position:relative}
@@ -394,3 +388,32 @@ input.inp:focus,textarea.inp:focus{border-color:#3B5BDB;box-shadow:0 0 0 3px rgb
 @keyframes tspin{to{transform:rotate(360deg)}}
 /* идет наблюдение: реестр и журнал лежат в общем блоке - отступ между ними как между карточками экрана */
 #s-tables{display:flex;flex-direction:column;gap:20px}
+/* «Нагрузка сервера», «База данных» (§5.21, §5.28): пояснение раздела - мелко и бледно после названия */
+.tw.tc.sec>.tbar{flex-wrap:wrap;row-gap:4px;padding-right:96px}      /* справа - кнопки карточки */
+.sec>.tbar h2{white-space:nowrap}
+.sec .tbar .secn{font-size:12px;color:#8A93A5;min-width:0}
+.sec>.tbar .lbl{margin-left:auto;text-align:right}
+.sec .flts .fl{align-self:flex-end}
+.secsum{display:flex;flex-wrap:wrap;gap:8px;padding:0 20px 12px}
+.secsum:empty{display:none}
+/* ожидания: полоса долей по группам и подписи (цвет - вместе с названием и долей) */
+.wbar{display:flex;gap:2px;height:12px;margin:0 20px 8px;border-radius:6px;overflow:hidden}
+.wbar span{min-width:3px}
+.wleg{display:flex;flex-wrap:wrap;gap:6px 18px;padding:0 20px 12px;font-size:12px;color:#485264}
+.wleg i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.g-lock{background:#D9534F}.g-disk{background:#3B5BDB}.g-cpu{background:#E8A21A}.g-net{background:#12A87C}
+.g-mem{background:#9C36B5}.g-par{background:#748FFC}.g-page{background:#7A8496}.g-oth{background:#BCC3CF}
+.shr{display:inline-block;width:40px;height:6px;background:#EEF1F6;border-radius:3px;margin-right:8px;vertical-align:middle;overflow:hidden}
+.shr i{display:block;height:100%;background:#9FB2F2}
+.t td.clip.wide{max-width:420px}
+/* строка, к которой перешли с другого экрана: подсветка гаснет */
+.t tr.hl td{animation:hlfade 4s ease-out both}
+@keyframes hlfade{from{background:#FFE9A8}to{background:#FFF8E1}}
+/* таблицы: индексы под строкой */
+.t tr.sub>td{background:#FAFBFE;padding:4px 14px 12px 46px;white-space:normal}
+.t.isub{width:auto;background:#FFF;border:1px solid #E3E7EF;border-radius:8px}   /* по содержимому, не на ширину строки */
+.t .acts2 .ib.on{background:#EBEFFD;color:#2F4AC0}
+/* значок-подсказка: на что обратить внимание */
+.warn{display:inline-flex;vertical-align:-2px;margin:0 4px;cursor:help}
+.t td.n .warn{margin:0 5px 0 0}
+.chip.sm{height:19px;padding:0 7px;font-size:11px;vertical-align:1px}

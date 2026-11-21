@@ -7,8 +7,8 @@
 GUI читает файлы запусков и CompareQuery.json и запускает CompareQuery.py отдельными процессами
 (--events --parent-pid). Сам он обращается к серверу только легкими чтениями DMV: список сессий
 (GUI.md §5.9), «Текущие запросы» (§5.20), «Тяжелые запросы» (§5.21), тексты и планы по кнопке;
-единственное изменение - KILL сессии по подтверждению пользователя. Свое состояние хранит в разделе
-"GUI" CompareQuery.json.
+изменения - только KILL сессии и отмена ее запроса (PostgreSQL), по подтверждению пользователя.
+Свое состояние хранит в разделе "GUI" CompareQuery.json.
 """
 
 import csv
@@ -46,88 +46,9 @@ DIFF_TOOLS = [   # GUI.md §5.5: после пути из "GUI" и git config
                   r"%LOCALAPPDATA%\Programs\WinMerge\WinMergeU.exe"]),
 ]
 _diff_cache = {}
-# Служебные подключения CompareQuery (контрольное, наблюдение, сам GUI) в списках сессий не показываются.
-# Рабочее подключение прогона (APP=CompareQuery) показывается: тестовые запросы бывают тяжелыми.
-SERVICE_APPS = "(" + ", ".join(f"'{cq.APP_NAME} {x}'" for x in ("control", "session", "gui")) + ")"
-SESSIONS_SQL = (
-    "SELECT s.session_id, DB_NAME(s.database_id), s.program_name, s.host_name, s.login_name, "
-    "r.total_elapsed_time, OBJECT_SCHEMA_NAME(t.objectid, t.dbid) + '.' + OBJECT_NAME(t.objectid, t.dbid) "
-    "FROM sys.dm_exec_sessions s "
-    "LEFT JOIN sys.dm_exec_requests r ON r.session_id = s.session_id "
-    "OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t "
-    "WHERE s.is_user_process = 1 AND s.session_id <> @@SPID "
-    "AND ISNULL(s.program_name, '') NOT IN " + SERVICE_APPS)
 
-# «Текущие запросы» (GUI.md §5.20), раз в 3 с: пользовательские сессии с запросом и те, кто блокирует
-# других (в том числе простаивающие с открытой транзакцией). Только DMV по активным запросам и текст
-# оператора; план и исходный запрос - по кнопке. Второй набор - итоги по серверу.
-CURRENT_SQL = (
-    "SET NOCOUNT ON; "
-    "SELECT s.session_id, DB_NAME(COALESCE(r.database_id, s.database_id)), s.login_name, s.host_name, s.program_name, "
-    "s.status, r.status, r.command, r.total_elapsed_time, r.cpu_time, r.logical_reads, r.reads, r.writes, "
-    "r.granted_query_memory, r.wait_type, r.wait_time, r.blocking_session_id, r.open_transaction_count, "
-    "r.percent_complete, r.plan_handle, r.statement_start_offset, r.statement_end_offset, b.blocked, "
-    "t.dbid, t.objectid, OBJECT_SCHEMA_NAME(t.objectid, t.dbid) + '.' + OBJECT_NAME(t.objectid, t.dbid), t.text, "
-    "DATEDIFF(SECOND, s.last_request_start_time, GETDATE()), lt.text, COALESCE(r.start_time, s.last_request_start_time) "
-    "FROM sys.dm_exec_sessions s "
-    "LEFT JOIN sys.dm_exec_requests r ON r.session_id = s.session_id "
-    "LEFT JOIN (SELECT blocking_session_id, COUNT(*) blocked FROM sys.dm_exec_requests "
-    "  WHERE blocking_session_id > 0 AND blocking_session_id <> session_id GROUP BY blocking_session_id) b "
-    "  ON b.blocking_session_id = s.session_id "
-    "OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t "
-    # у простаивающей блокирующей сессии - ее последний запрос (кто оставил открытую транзакцию)
-    "LEFT JOIN sys.dm_exec_connections c ON c.session_id = s.session_id AND r.session_id IS NULL "
-    "OUTER APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) lt "
-    "WHERE s.is_user_process = 1 AND s.session_id <> @@SPID "
-    "AND ISNULL(s.program_name, '') NOT IN " + SERVICE_APPS + " "
-    "AND (r.session_id IS NOT NULL OR b.blocked IS NOT NULL); "
-    "SELECT (SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1), "
-    "(SELECT SUM(runnable_tasks_count) FROM sys.dm_os_schedulers WHERE status = 'VISIBLE ONLINE'), "
-    "(SELECT COUNT(*) FROM sys.dm_exec_query_memory_grants WHERE grant_time IS NULL), SYSDATETIME()")
-CURRENT_COLS = ("spid", "db", "login", "host", "program", "session_status", "status", "command", "elapsed", "cpu",
-                "reads", "physical", "writes", "memory", "wait", "wait_ms", "blocked_by", "trans", "percent",
-                "plan_handle", "start", "end", "blocks", "dbid", "objectid", "object", "text", "idle_s", "last_text",
-                "req_start")
-# исходный запрос сессий (первоначальный вызов клиента) - только для новых запросов: ключ (сессия, начало
-# запроса), один запрос на все новые сессии, без функции (до SQL Server 2014 SP2) - не спрашивается
-INPUT_BUFFERS_SQL = ("SELECT s.session_id, ib.event_info FROM sys.dm_exec_sessions s "
-                     "CROSS APPLY sys.dm_exec_input_buffer(s.session_id, NULL) ib WHERE s.session_id IN ({ids})")
-
-# «Тяжелые запросы» (GUI.md §5.21), по кнопке: статистика кэша планов. Один проход по
-# sys.dm_exec_query_stats с сортировкой TOP N (без полной сортировки); текст - только для N строк
-# (TOP во вложенном запросе), планы - по кнопке. Итоги накоплены с момента компиляции плана.
-HEAVY_ORDER = {
-    "cpu": "total_worker_time", "cpu_avg": "total_worker_time / NULLIF(execution_count, 0)",
-    "time": "total_elapsed_time", "time_avg": "total_elapsed_time / NULLIF(execution_count, 0)",
-    "reads": "total_logical_reads", "reads_avg": "total_logical_reads / NULLIF(execution_count, 0)",
-    "writes": "total_logical_writes", "execs": "execution_count", "max_time": "max_elapsed_time",
-}
-HEAVY_SQL = (
-    "SELECT x.plan_handle, x.statement_start_offset, x.statement_end_offset, x.execution_count, "
-    "x.total_worker_time, x.total_elapsed_time, x.max_elapsed_time, x.total_logical_reads, "
-    "x.total_physical_reads, x.total_logical_writes, x.total_rows, x.last_execution_time, x.creation_time, "
-    "DB_NAME(t.dbid), OBJECT_SCHEMA_NAME(t.objectid, t.dbid) + '.' + OBJECT_NAME(t.objectid, t.dbid), t.text "
-    "FROM (SELECT TOP (?) * FROM sys.dm_exec_query_stats "
-    "  WHERE last_execution_time >= DATEADD(HOUR, -?, GETDATE()) ORDER BY {order} DESC) x "
-    "OUTER APPLY sys.dm_exec_sql_text(x.sql_handle) t ORDER BY {order} DESC")
-HEAVY_COLS = ("plan_handle", "start", "end", "execs", "cpu", "time", "max_time", "reads", "physical", "writes",
-              "rows", "last", "created", "db", "object", "text")
+# Запросы к серверу (сессии, текущие и тяжелые запросы, планы, KILL) - в диалекте СУБД (cq_mssql.py, cq_pg.py).
 DB_TIMEOUT_S = 20             # GUI: таймаут запроса к серверу, с
-
-# Плашки «Новое наблюдение» (GUI.md §5.9): запросы выполняющихся в базе и дольше 5 минут; свободное
-# место в файлах базы (данные, лог) и на дисках с ними. Все - системные представления, без чтения данных.
-TILE_SESSIONS_SQL = (
-    "SELECT COUNT(*), SUM(CASE WHEN r.total_elapsed_time >= 300000 THEN 1 ELSE 0 END) "
-    "FROM sys.dm_exec_requests r JOIN sys.dm_exec_sessions s ON s.session_id = r.session_id "
-    "WHERE s.is_user_process = 1 AND r.session_id <> @@SPID AND r.database_id = DB_ID(?) "
-    "AND ISNULL(s.program_name, '') NOT IN " + SERVICE_APPS)
-TILE_SPACE_SQL = ("SELECT type, SUM(CAST(size - FILEPROPERTY(name, 'SpaceUsed') AS bigint)) * 8 / 1024 "
-                  "FROM sys.database_files WHERE type IN (0, 1) GROUP BY type")
-TILE_DISKS_SQL = ("SELECT f.type, v.volume_mount_point, v.available_bytes / 1048576, "
-                  "CASE WHEN f.growth > 0 AND (f.max_size = -1 OR f.size < f.max_size) THEN 1 ELSE 0 END "
-                  "FROM sys.database_files f CROSS APPLY sys.dm_os_volume_stats(DB_ID(), f.file_id) v "
-                  "WHERE f.type IN (0, 1)")
-
 
 # ============================================================ локализация (GUI.md §5.22)
 # Сообщения Python-части GUI - как в интерфейсе: исходный текст - ключ, перевод - gui/locales/<язык>.json
@@ -171,8 +92,9 @@ def write_json(raw):
 
 
 def conn_value(cs, key):
-    m = re.search(r"(?:^|;)\s*" + key + r"\s*=\s*([^;]*)", cs or "", re.I)
-    return m.group(1).strip().strip("{}") if m else ""
+    """Сервер (key "server") или база ("database") строки подключения любой СУБД - для подписей."""
+    server, database = cq.conn_parts(cs)
+    return server if key == "server" else database
 
 
 # ============================================================ отчеты
@@ -309,14 +231,6 @@ def slow_info(header):
     return None
 
 
-def statement_of(text, start, end):
-    """Оператор по смещениям (байты nvarchar, как у CLI) и номер его строки в тексте объекта или батча."""
-    text = text or ""
-    i0 = (start or 0) // 2
-    i1 = len(text) if end is None or end < 0 else end // 2 + 1
-    return text[i0:i1].strip(), text.count("\n", 0, i0) + 1
-
-
 def temp_file(name, text):
     """Файл для открытия программой по умолчанию (план .sqlplan - в SSMS) во временной папке компьютера."""
     d = Path(os.environ.get("TEMP") or ".") / "CompareQuery"
@@ -331,6 +245,19 @@ def is_default_connection(cs, login):
     return not (cs or "").strip() or (conn_value(cs, "server").lower() == "localhost"
                                       and conn_value(cs, "database").lower() == "master"
                                       and (login or "").lower() == "sa")
+
+
+EXTRA_TABLES = ("nested.csv", "functions.csv", "tables.csv")    # PostgreSQL: файлы папки реестра, кроме registry/log
+
+
+def dbms_info(cs):
+    """Что интерфейсу нужно знать о СУБД активного подключения (без подключения к серверу): имя, показатели
+    «Тяжелых запросов» (первый - по умолчанию), есть ли --hours и --explain, колонки экранов без данных."""
+    db = cq.get_dialect({"connection_string": cs})
+    return {"name": db.name, "heavy_orders": list(db.heavy_orders), "heavy_hours": db.heavy_hours, "heavy_interval": db.heavy_interval,
+            "can_explain": db.can_explain, "can_cancel": db.can_cancel, "can_estimate": db.can_estimate, "absent": db.gui_absent,
+            "load_by_db": list(db.load_by_db), "waits_total": db.waits_total, "has_temp_tables": db.has_temp_tables,
+            "space_per_db": db.space_per_db}
 
 
 def no_connection(raw, g):
@@ -488,7 +415,7 @@ class Api:
         self._close_ok = False
         self._cache = {}           # путь отчета -> (mtime, разобранный отчет)
         self._conn = None          # подключение GUI к серверу (_query)
-        self._inbuf, self._inbuf_ok = {}, True     # исходные запросы сессий («Текущие запросы»)
+        self._db = None            # диалект СУБД активного подключения (_dialect)
         self._db_lock = threading.RLock()
         raw = read_json()
         g = raw.get("GUI") if isinstance(raw.get("GUI"), dict) else {}
@@ -599,9 +526,7 @@ class Api:
                 "columns": g.get("columns") or {}, "tcollapsed": g.get("tcollapsed") or {}, "diff_tool": g.get("diff_tool") or "",
                 "diff_found": (find_diff_tool(g.get("diff_tool")) or {}).get("name"),
                 "notify": g.get("notify", True), "lang": g.get("lang"),
-                "tiles": [{"id": x.get("id"), "name": x.get("name"), "sql": x.get("sql")}
-                          for x in (g.get("tiles") or []) if isinstance(x, dict)],
-                "no_connection": no_connection(raw, g),
+                "no_connection": no_connection(raw, g), "dbms": dbms_info(cs),
                 "procs": [p.info() for p in self._procs.values()]}
 
     def poll(self, since):
@@ -654,9 +579,13 @@ class Api:
         return raw, g, items, active
 
     def connections(self):
-        """Список для окна настроек: подписи «сервер — база — логин», без паролей."""
+        """Список для окна настроек: подписи «сервер — база — логин», без паролей; установленные драйверы
+        (ODBC-драйверы SQL Server и есть ли psycopg для PostgreSQL)."""
+        import importlib.util
+        import cq_mssql
         _, _, items, active = self._connections()
-        return {"active": active, "items": [
+        drivers = {"mssql": cq_mssql.sql_server_drivers(), "pg": importlib.util.find_spec("psycopg") is not None}
+        return {"active": active, "drivers": drivers, "items": [
             {"id": c["id"], "connection_string": c.get("connection_string") or "", "login": c.get("login") or "",
              "has_password": bool(c.get("password")), "server": conn_value(c.get("connection_string"), "server"),
              "database": conn_value(c.get("connection_string"), "database")} for c in items]}
@@ -697,22 +626,20 @@ class Api:
     def test_connection(self, conn_id, connection_string, login, password):
         """Проверка подключения с введенными значениями (пустой пароль - сохраненный у conn_id):
         вход и один легкий запрос. Возвращает сервер, базу, логин, версию."""
-        import pyodbc
         if password is None:
             _, _, items, _ = self._connections()
             password = next((c.get("password") or "" for c in items if c["id"] == conn_id), "")
-        cs = cq.build_conn_str({"connection_string": connection_string.strip(), "login": login.strip(),
-                                "password": password}, cq.APP_NAME + " gui")
+        db = cq.get_dialect({"connection_string": connection_string.strip(), "login": login.strip(),
+                             "password": password})
         t = time.time()
-        conn = pyodbc.connect(cs, autocommit=True, timeout=10)
+        conn = db.connect(cq.APP_NAME + " gui", timeout=10)
         try:
-            row = conn.cursor().execute(
-                "SELECT @@SERVERNAME, DB_NAME(), SUSER_SNAME(), CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128)), "
-                "CAST(SERVERPROPERTY('Edition') AS nvarchar(128))").fetchone()
+            out = db.server_props(cq.conn_query(conn))
         finally:
             conn.close()
-        return {"server": row[0], "database": row[1], "login": row[2], "version": row[3], "edition": row[4],
-                "ms": round((time.time() - t) * 1000)}
+        out["ms"] = round((time.time() - t) * 1000)
+        out["dbms"] = db.name
+        return out
 
     def set_gui(self, key, value):
         """Значения раздела "GUI": params, collapsed, notes и т. п."""
@@ -802,7 +729,8 @@ class Api:
 
     # ---------------------------------------------------- запуски
 
-    def start_run(self, name, repeat, profile, rollback):
+    def start_run(self, name, repeat, profile, rollback, explain=None):
+        """explain - порог --explain в мс (0 - планы всех операторов), None - без планов."""
         args = [name]
         if repeat and int(repeat) >= 2:
             args += ["--repeat", str(int(repeat))]
@@ -810,6 +738,8 @@ class Api:
             args.append("--profile")
         if rollback:
             args.append("--rollback")
+        if explain is not None:
+            args += ["--explain", str(max(int(explain), 0))]
         return self._start("run", args, name, Path(name).stem)
 
     def stop(self, pid):
@@ -833,6 +763,9 @@ class Api:
             out["registry"] = read_csv_rows(d / cq.REGISTRY_TABLE)[1]
             out["log"] = read_csv_rows(d / cq.REGISTRY_LOG)[1]
             out["slow"] = slow_info(registry_header(d / cq.REGISTRY_FILE))
+            # PostgreSQL: функции, таблицы и операторы внутри функций (--profile, --explain), если есть и не пустые
+            out["extra_tables"] = [{"file": str(d / name), "name": name, "header": head, "rows": rows}
+                                   for name in EXTRA_TABLES for head, rows in [read_csv_rows(d / name)] if rows]
         jr = r["run"].get("Журнал")
         out["journal"] = read_journal(p.parent / jr) if jr else None
         _, g = self._gui()
@@ -1077,6 +1010,48 @@ class Api:
         tool = find_diff_tool(g.get("diff_tool"))
         return {"files": [a.name, b.name], "tool": tool["name"] if tool else None}
 
+    def diff_rows(self, a, b, n):
+        """Только отличающиеся строки таблицы n двух запусков (A - a, B - b): два CSV в папке данных B рядом с CSV
+        этой таблицы - <таблица B>__<запуск A>_diff_A.csv и ..._diff_B.csv (имена начинаются с таблицы B, поэтому
+        оба файла стоят рядом с ней и друг с другом; повторное нажатие перезаписывает их). Строка «изменена» - в
+        обоих файлах на одном месте, «только в A/B» - в своем; порядок - ключа сравнения. Затем папка с выделенным
+        файлом B и через 300 мс поверх нее - программа сравнения (GUI.md §4.2)."""
+        n = int(n)
+        ra, rb = cq.parse_report(self._path(a), "A"), cq.parse_report(self._path(b), "B")
+        if n not in ra["tables"] or n not in rb["tables"]:
+            raise ValueError(tr("таблицы {n} нет в одном из запусков", n=n))
+        _, _, error, examples = cq.compare_table(n, ra, rb, limit=None)
+        if error or not examples:
+            raise ValueError(tr("отличающихся строк нет: строки таблиц не сравнивались (другая структура или ошибка)")
+                             if error or not rb["tables"][n].get("file") else tr("отличающихся строк нет"))
+        tb = rb["tables"][n]
+        src = self._path(b).parent / tb["file"]
+        if not src.is_file():
+            src = self._path(b).parent / Path(tb["file"]).name       # старый отчет: данные рядом с ним
+        base = f"{src.stem}__{Path(a).stem}_diff"
+        files = {side: src.parent / f"{base}_{side}.csv" for side in ("A", "B")}
+        out = {"A": [], "B": []}
+        for e in examples:
+            if e["kind"] == "diff":
+                out["A"].append(e["a"])
+                out["B"].append(e["b"])
+            else:
+                out[e["kind"]].append(e["row"])
+        head = cq.DELIM.join(cq.format_cell(cq.escape(x)) for x in tb["names"])
+        for side, path in files.items():
+            with open(path, "w", encoding=cq.FILE_ENCODING, newline="\n") as f:
+                f.write(head + "\n")
+                for row in out[side]:
+                    f.write(cq.DELIM.join(cq.format_cell(c) for c in row) + "\n")
+        self.show_in_folder(files["B"])
+        _, g = self._gui()
+        tool = find_diff_tool(g.get("diff_tool"))
+        if tool:
+            time.sleep(0.3)              # сравнение - поверх уже открытой папки
+            subprocess.Popen(tool["cmd"] + [str(files["A"]), str(files["B"])], creationflags=0x08000000 if os.name == "nt" else 0)
+        return {"tool": tool["name"] if tool else None, "a": len(out["A"]), "b": len(out["B"]),
+                "files": [files["A"].name, files["B"].name]}
+
     def run_diff(self, kind, args):
         a, b = self._diff_files(kind, args)
         _, g = self._gui()
@@ -1154,45 +1129,37 @@ class Api:
     # ---------------------------------------------------- наблюдение за сессией
 
     # ---------------------------------------------------- запросы GUI к серверу
-    # GUI сам читает только DMV: список сессий (§5.9), «Текущие запросы» (§5.20), «Тяжелые запросы» (§5.21),
-    # тексты и планы по кнопке; меняет только KILL по явному подтверждению. Одно подключение на все
+    # GUI сам читает только системные представления: список сессий (§5.9), «Текущие запросы» (§5.20),
+    # «Тяжелые запросы» (§5.21), тексты и планы по кнопке; меняет только KILL и отмена запроса по подтверждению.
+    # Запросы - в диалекте СУБД (cq.get_dialect), те же, что у CLI --show. Одно подключение на все
     # (APP "CompareQuery gui", в свои же списки не попадает), переиспользуется; при ошибке открывается заново.
 
-    def _query(self, sql, *params, sets=1):
-        """Строки sets первых наборов (sets=1 - список строк, иначе список наборов)."""
-        import pyodbc
+    def _dialect(self):
+        """Диалект СУБД активного подключения; после смены подключения (_close_db) - заново."""
         with self._db_lock:
+            if self._db is None:
+                self._db = cq.get_dialect(cq.read_settings())
+            return self._db
+
+    def _query(self, sql, *params, sets=1):
+        """Строки результата (cq.fetch_sets): sets=1 - список строк, N - список наборов, -1 - последний набор."""
+        with self._db_lock:
+            db = self._dialect()
             try:
                 if self._conn is None:
-                    conn_str = cq.build_conn_str(cq.read_settings(), cq.APP_NAME + " gui")
-                    self._conn = pyodbc.connect(conn_str, autocommit=True, timeout=15)
-                    self._conn.timeout = DB_TIMEOUT_S
+                    self._conn = db.connect(cq.APP_NAME + " gui", timeout=15, query_timeout=DB_TIMEOUT_S)
                 cur = self._conn.cursor()
                 try:
                     cur.execute(sql, *params)
-                    if sets == -1:                 # строки последнего набора с колонками
-                        last = []
-                        while True:
-                            if cur.description is not None:
-                                last = [list(r) for r in cur.fetchall()]
-                            if not cur.nextset():
-                                return last
-                    out = []
-                    while len(out) < sets:
-                        while cur.description is None:     # наборы без строк (SET и т. п.) пропускаются
-                            if not cur.nextset():
-                                return out[0] if sets == 1 and out else out
-                        out.append([list(r) for r in cur.fetchall()])
-                        if len(out) < sets and not cur.nextset():
-                            break
-                    return out[0] if sets == 1 else out
+                    return cq.fetch_sets(cur, sets)
                 finally:
                     cur.close()
-            except pyodbc.Error:
+            except db.Error:
                 self._close_db()
                 raise
 
     def _close_db(self):
+        self._db = None
         conn, self._conn = self._conn, None
         if conn is not None:
             try:
@@ -1202,171 +1169,203 @@ class Api:
 
     def list_sessions(self):
         """Один легкий запрос списка пользовательских сессий (GUI.md §5.9)."""
-        rows = self._query(SESSIONS_SQL)
-        keys = ("spid", "db", "program", "host", "login", "elapsed", "proc")
-        out = [dict(zip(keys, r)) for r in rows]
-        out.sort(key=lambda x: ((x["db"] or "").lower(), (x["program"] or "").lower(), x["spid"]))
-        return out
-
-    # ---------------------------------------------------- плашки экрана «Новое наблюдение» (GUI.md §5.9)
-    # Две свои (активные сессии; свободное место) и пользовательские ("GUI".tiles: [{id, name, sql}]).
-    # Все - в контексте выбранной базы; пользовательский скрипт выполняется как есть, с SET LOCK_TIMEOUT,
-    # чтобы не ждать за чужими блокировками. Из него берется последняя таблица: первая ячейка первой
-    # строки - крупно, первая ячейка второй строки - мелко.
-
-    def tile(self, db, kind, tile_id=None):
-        """Значение плашки kind (sessions, space, user) для базы db."""
-        if not db:
-            raise ValueError(tr("база не выбрана"))
-        if not self._query("SELECT DB_ID(?)", db)[0][0]:
-            raise ValueError(tr("нет базы {name}", name=db))
-        use = "USE [" + db.replace("]", "]]") + "]; "
-        if kind == "sessions":
-            r = self._query(TILE_SESSIONS_SQL, db)[0]
-            return {"active": r[0] or 0, "long": r[1] or 0}
-        if kind == "space":
-            files = self._query(use + TILE_SPACE_SQL)
-            out = {"data_mb": None, "log_mb": None, "data_disk": None, "log_disk": None}
-            for typ, free_mb in files:
-                out["data_mb" if typ == 0 else "log_mb"] = free_mb
-            try:                     # диски: нужно VIEW SERVER STATE
-                rows = self._query(use + TILE_DISKS_SQL)
-            except Exception:
-                rows = []
-            for typ, key in ((0, "data_disk"), (1, "log_disk")):
-                # диски, где файлы этого вида могут расти (автоприрост, не уперлись в предел);
-                # таких нет - все диски с файлами; свободное место - сумма по разным дискам
-                mine = [r for r in rows if r[0] == typ]
-                grow = [r for r in mine if r[3]] or mine
-                vols = {}
-                for _, mount, free_mb, _ in grow:
-                    vols[mount] = free_mb
-                if vols:
-                    out[key] = {"mounts": sorted(vols), "free_mb": sum(vols.values())}
-            return out
-        if kind == "user":
-            t = next((x for x in (self._gui()[1].get("tiles") or []) if x.get("id") == tile_id), None)
-            if not t:
-                raise ValueError(tr("плашка не найдена"))
-            rows = self._query("SET LOCK_TIMEOUT 3000; " + use + "\n" + t.get("sql", ""), sets=-1)
-            def cell(i):
-                v = rows[i][0] if len(rows) > i and rows[i] else None
-                return v if v is None or isinstance(v, (int, float)) else str(v)
-            return {"main": cell(0), "sub": cell(1)}
-        raise ValueError(tr("неизвестная плашка: {name}", name=kind))
-
-    def save_tile(self, tile_id, name, sql):
-        """Пользовательская плашка: tile_id None - новая. Возвращает id."""
-        name, sql = (name or "").strip(), (sql or "").strip()
-        if not name or not sql:
-            raise ValueError(tr("нужны название и скрипт"))
-        _, g = self._gui()
-        tiles = [x for x in (g.get("tiles") or []) if isinstance(x, dict)]
-        t = next((x for x in tiles if x.get("id") == tile_id), None)
-        if t is None:
-            t = {"id": new_conn_id().replace("c", "t", 1)}
-            tiles.append(t)
-        t["name"], t["sql"] = name, sql
-        self._set_gui(tiles=tiles)
-        return t["id"]
-
-    def delete_tile(self, tile_id):
-        _, g = self._gui()
-        self._set_gui(tiles=[x for x in (g.get("tiles") or []) if isinstance(x, dict) and x.get("id") != tile_id])
-        return True
+        with self._db_lock:
+            return self._dialect().sessions(self._query)
 
     def current_queries(self):
         """«Текущие запросы» (GUI.md §5.20): строки и итоги по серверу. Текст - только оператор."""
-        rows, total = self._query(CURRENT_SQL, sets=2)
-        out = []
-        for r in rows:
-            x = dict(zip(CURRENT_COLS, r))
-            x["statement"], x["line"] = statement_of(x.pop("text"), x["start"], x["end"])
-            x["last_text"] = (x["last_text"] or "").strip()
-            x["plan_handle"] = x["plan_handle"].hex() if x["plan_handle"] else None
-            x["memory"] = round((x["memory"] or 0) * 8 / 1024, 1)        # страницы по 8 КБ -> МБ
-            x["wait"] = (x["wait"] or "").strip()
-            out.append(x)
-        self._input_buffers(out)
-        t = total[0] if total else [None] * 4
-        return {"rows": out, "sessions": t[0], "runnable": t[1], "memory_waits": t[2],
-                "server_time": t[3].isoformat(timespec="seconds") if t[3] else None}
+        with self._db_lock:
+            return self._dialect().current(self._query)
 
-    def _input_buffers(self, rows):
-        """Поле input строк «Текущих запросов»: исходный запрос сессии одной строкой. С сервера - только для
-        запросов, которых еще нет в памяти (сменилось начало запроса сессии)."""
-        cache = self._inbuf
-        keys = {x["spid"]: (x["spid"], str(x["req_start"])) for x in rows}
-        need = [spid for spid, k in keys.items() if k not in cache]
-        if need and self._inbuf_ok:
-            try:
-                got = {r[0]: r[1] for r in self._query(INPUT_BUFFERS_SQL.format(ids=", ".join(str(int(n)) for n in need)))}
-                for spid in need:
-                    cache[keys[spid]] = " ".join((got.get(spid) or "").replace("\x00", "").split())[:1000]
-            except Exception:
-                self._inbuf_ok = False           # нет функции или права - больше не спрашивать
-        for k in [k for k in cache if k not in keys.values()]:
-            del cache[k]                         # в памяти - только текущие запросы
-        for x in rows:
-            x["input"] = cache.get(keys[x["spid"]], "")
-            x.pop("req_start", None)
+    def _pause(self, seconds):
+        """Пауза замера: на это время подключение свободно для других запросов GUI («Текущие запросы»)."""
+        self._db_lock.release()
+        try:
+            time.sleep(seconds)
+        finally:
+            self._db_lock.acquire()
 
-    def heavy_queries(self, order="cpu", hours=0, top=100):
-        """«Тяжелые запросы» (GUI.md §5.21): TOP операторов кэша планов по показателю order,
-        выполнявшихся за последние hours часов (0 - за все время в кэше). Время - мс."""
-        if order not in HEAVY_ORDER:
-            raise ValueError(tr("неизвестный показатель: {name}", name=order))
-        top = max(10, min(500, int(top)))
-        hours = int(hours) if hours and int(hours) > 0 else 24 * 365 * 20
-        rows = self._query(HEAVY_SQL.format(order=HEAVY_ORDER[order]), top, hours)
-        out = []
-        for r in rows:
-            x = dict(zip(HEAVY_COLS, r))
-            x["statement"], x["line"] = statement_of(x.pop("text"), x["start"], x["end"])
-            x["plan_handle"] = x["plan_handle"].hex() if x["plan_handle"] else None
-            for k in ("cpu", "time", "max_time"):
-                x[k] = round((x[k] or 0) / 1000)                       # мкс -> мс
-            for k in ("last", "created"):
-                x[k] = x[k].isoformat(sep=" ", timespec="seconds") if x[k] else None
-            out.append(x)
+    @staticmethod
+    def _part(out, name, fn):
+        """Раздел экрана: результат fn() или {"err": текст} - ошибка одного раздела не мешает остальным."""
+        try:
+            out[name] = fn()
+        except ValueError as e:
+            out[name] = {"err": tr(str(e))}
+        except Exception as e:
+            out[name] = {"err": cq.err_text(e)}
+
+    def databases(self):
+        """Базы для выбора на экранах «Нагрузка сервера» и «База данных»."""
+        with self._db_lock:
+            return self._dialect().databases(self._query)
+
+    def server_load(self, parts, db=None, interval=0, order=None, hours=0, top=100):
+        """«Нагрузка сервера» (GUI.md §5.21): разделы parts из heavy, waits, io за одни и те же секунды. interval -
+        разница двух снимков с паузой interval секунд (0 - накоплено с перезапуска или сброса статистики;
+        ожидания PostgreSQL - всегда замер, WAITS_DEFAULT_S). Порядок: первый снимок тяжелых запросов, первый
+        снимок ввода-вывода, замер ожиданий (он же пауза), вторые снимки. db - отбор по базе, где он есть
+        (dialect.load_by_db). У MS SQL Server тяжелых запросов за интервал нет: hours - «за последние часы»."""
+        parts, interval, db, out = set(parts), int(interval or 0), db or None, {}
+        with self._db_lock:
+            d = self._dialect()
+            order = order or d.heavy_orders[0]
+            if order not in d.heavy_orders:
+                raise ValueError(tr("неизвестный показатель: {name}", name=order))
+            done = []
+
+            def middle(seconds):           # между снимками тяжелых запросов (или без них)
+                done.append(True)
+                spec = d.stats_spec["io"]
+                io1 = {}
+                if "io" in parts and seconds:
+                    self._part(io1, "r", lambda: d.stats("io", self._query))
+                if "waits" in parts:
+                    self._part(out, "waits", lambda: self._waits(d, seconds, db))
+                elif seconds:
+                    self._pause(seconds)
+                if "io" in parts:
+                    def io():
+                        if "err" in io1.get("r", {}):
+                            return io1["r"]
+                        res = d.stats("io", self._query)
+                        rows = (cq.delta_rows(io1["r"]["rows"], res["rows"], spec["key"], spec["counters"]) if seconds
+                                else [r for r in res["rows"] if any(r.get(c) for c in spec["counters"])])
+                        if db and "io" in d.load_by_db:
+                            rows = [r for r in rows if (r.get("db") or "").lower() == db.lower()]
+                        return {"rows": rows, "note": tr(res["note"]) if res["note"] else None, "seconds": seconds}
+                    self._part(out, "io", io)
+
+            if "heavy" in parts:
+                hint = interval if d.heavy_interval else 0
+                self._part(out, "heavy", lambda: {"rows": d.heavy(self._query, order, hours, top, hint,
+                                                                  middle if hint else None, db=db), "seconds": hint})
+            if not done:
+                middle(interval)
         return out
 
+    def _waits(self, d, seconds, db):
+        res = d.waits(self._query, seconds, self._pause, db=db)
+        res.pop("note", None)            # пояснение строит интерфейс (перевод)
+        return res
+
+    def db_info(self, part, db):
+        """«База данных» (GUI.md §5.28): раздел part (space, tables, functions, temp) базы db. Временные данные -
+        всего сервера (tempdb у MS SQL Server)."""
+        with self._db_lock:
+            d = self._dialect()
+            if part == "temp" or (part == "space" and not d.space_per_db):
+                res = (d.temp if part == "temp" else d.space)(self._query)
+            elif part in ("space", "tables", "functions"):
+                if not db:
+                    raise ValueError(tr("база не выбрана"))
+                fn = {"space": d.space, "tables": d.tables,
+                      "functions": lambda q: d.stats("functions", q)}[part]
+                try:
+                    res = d.in_db(self._query, db, fn)
+                except ValueError as e:
+                    raise ValueError(tr(str(e)))
+            else:
+                raise ValueError(tr("неизвестный раздел: {name}", name=part))
+        if res.get("note"):
+            res["note"] = "; ".join(tr(x) for x in res["note"].split("; "))
+        return res
+
+    def table_indexes(self, db, table_id):
+        """Индексы таблицы (строка раздела «Таблицы» раскрывается)."""
+        with self._db_lock:
+            d = self._dialect()
+            return d.in_db(self._query, db, lambda q: d.indexes(q, table_id))
+
+    def table_columns(self, db, table_id):
+        """Столбцы таблицы (вторая подтаблица строки раздела «Таблицы»)."""
+        with self._db_lock:
+            d = self._dialect()
+            return d.in_db(self._query, db, lambda q: d.columns(q, table_id))
+
+    def table_triggers(self, db, table_id):
+        """Триггеры таблицы (подтаблица строки раздела «Таблицы»)."""
+        with self._db_lock:
+            d = self._dialect()
+            res = d.in_db(self._query, db, lambda q: d.triggers(q, table_id))
+        if res.get("note"):
+            res["note"] = tr(res["note"])
+        return res
+
+    def table_sql(self, db, table_id):
+        """SQL создания таблицы по каталогу (кнопка у строки раздела «Таблицы»)."""
+        with self._db_lock:
+            d = self._dialect()
+            try:
+                return d.in_db(self._query, db, lambda q: d.table_sql(q, table_id))
+            except ValueError as e:
+                raise ValueError(tr(str(e)))
+
+    def temp_tables(self):
+        """Самые большие временные таблицы tempdb (MS SQL Server, по кнопке)."""
+        with self._db_lock:
+            return self._dialect().temp_tables(self._query)
+
     def open_plan(self, plan_handle, start, end, name):
-        """План оператора (sys.dm_exec_text_query_plan, как у CLI) - во временный .sqlplan и открыть."""
-        rows = self._query("SELECT query_plan FROM sys.dm_exec_text_query_plan(?, ?, ?)",
-                           bytes.fromhex(plan_handle), int(start or 0), int(end if end is not None else -1))
-        if not rows or not rows[0][0]:
+        """План оператора (как у CLI) - во временный файл (.sqlplan) и открыть."""
+        with self._db_lock:
+            db = self._dialect()
+            plan = db.plan(self._query, bytes.fromhex(plan_handle), start, end)
+        if not plan:
             raise ValueError(tr("плана уже нет в кэше сервера"))
-        os.startfile(str(temp_file(f"{name}.sqlplan", rows[0][0])))
+        os.startfile(str(temp_file(f"{name}{db.plan_ext}", plan)))
         return True
 
     def input_buffer(self, spid):
         """Исходный запрос сессии - что прислал клиент (вызов процедуры с параметрами, батч)."""
-        spid = int(spid)
-        try:
-            rows = self._query("SELECT event_info FROM sys.dm_exec_input_buffer(?, NULL)", spid)
-        except Exception:                       # до SQL Server 2014 SP2 функции нет
-            rows = [[r[2]] for r in self._query(f"DBCC INPUTBUFFER({spid}) WITH NO_INFOMSGS")]
-        return (rows[0][0] or "").replace("\x00", "").strip() if rows else ""
+        with self._db_lock:
+            return (self._dialect().input_buffer(self._query, int(spid)) or "").strip()
 
     def read_text(self, path):
         """Текстовый файл внутри рабочей папки (текст оператора реестра) - для окна текста."""
         p = self._path(path)
-        plan = p.with_suffix(".sqlplan")
+        plan = next((x for x in (p.with_suffix(".sqlplan"), p.with_suffix(".txt")) if x.is_file()), None)
         return {"text": p.read_text(encoding="utf-8-sig", errors="replace"),
-                "plan": str(plan) if plan.is_file() else None}
+                "plan": str(plan) if plan else None}
 
     def open_text(self, name, text):
         """Текст запроса - во временный .sql и открыть программой по умолчанию."""
         os.startfile(str(temp_file(f"{name}.sql", text)))
         return True
 
+    def estimate_plan(self, text, db=None, name="plan"):
+        """Оценочный план оператора (PostgreSQL: EXPLAIN без выполнения, на отдельном подключении только для
+        чтения к базе db; None - база подключения) - во временный .txt и открыть."""
+        with self._db_lock:
+            d = self._dialect()
+        if not d.can_estimate:
+            raise ValueError(tr("оценочного плана у этой СУБД нет"))
+        try:
+            plan = d.estimate_plan(text, db or None)
+        except ValueError as e:
+            raise ValueError(tr(str(e)))
+        os.startfile(str(temp_file(f"{name}_estimate.txt", plan)))
+        return True
+
+    def cancel_query(self, spid):
+        """Отменить текущий запрос сессии (PostgreSQL: pg_cancel_backend; сессия остается) - по подтверждению."""
+        with self._db_lock:
+            d = self._dialect()
+            if not d.can_cancel:
+                raise ValueError(tr("отменить запрос у этой СУБД нельзя, только закрыть сессию"))
+            try:
+                d.cancel(self._query, spid)
+            except ValueError as e:
+                raise ValueError(tr(str(e)))
+        return True
+
     def kill_session(self, spid):
         """KILL сессии - единственное изменение на сервере из GUI, только по подтверждению пользователя."""
-        spid = int(spid)
-        if spid <= 50:
-            raise ValueError(tr("системная сессия"))
-        self._query(f"KILL {spid}")
+        with self._db_lock:
+            try:
+                self._dialect().kill(self._query, spid)
+            except ValueError as e:
+                raise ValueError(tr(str(e)))
         return True
 
     def start_session(self, spid):

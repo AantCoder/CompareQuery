@@ -2,7 +2,7 @@
 "use strict";
 
 // строка внизу левой панели (под «Справка»); ссылка открывается в браузере
-const ABOUT_TEXT = "v1.0 · © 2026 Ant · MIT License ·";
+const ABOUT_TEXT = "v1.1 · © 2026 Ant · MIT License ·";
 const ABOUT_LINK = {text: "GitHub", url: "https://github.com/AantCoder/CompareQuery"};
 
 // ================================================================ связь с Python
@@ -101,6 +101,18 @@ document.addEventListener("mouseover", e => {
   }, QTIP_MS);
 });
 document.addEventListener("mousedown", qtipHide, true);
+// заполненный фильтр-список (select.flt: первый вариант - «все») - зеленая рамка (.set); текстовый - по CSS
+document.addEventListener("change", e => { if (e.target.matches && e.target.matches("select.flt")) fltMark(e.target); });
+const fltMark = sel => sel.classList.toggle("set", sel.selectedIndex > 0);
+const fltMarks = root => root.querySelectorAll("select.flt").forEach(fltMark);
+// крестик текстового фильтра: очистить и применить (обработчик input фильтра)
+const FLX = `<span class="flx" onmousedown="event.preventDefault()" onclick="fltClear(this)">×</span>`;
+function fltClear(x) {
+  const i = x.parentNode.querySelector("input");
+  i.value = "";
+  i.dispatchEvent(new Event("input", {bubbles: true}));
+  i.focus();
+}
 document.addEventListener("scroll", qtipHide, true);
 // Контекстное меню: items - [ключ, значок (html), подпись (html), класс] или "-" (разделитель);
 // pick(ключ) - действие выбранного пункта.
@@ -147,6 +159,9 @@ function toast(msg, err) {
 function fail(e) { toast(String(e && e.message || e), true); }
 
 const I = {
+  bolt: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M13 2.5 4.5 13.5H11l-1 8 8.5-11H12z"/></svg>`,
+  code: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 4.5l-3 15"/></svg>`,
+  warn: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path d="M12 2.8 1.8 20.6h20.4z" fill="#FCC419" stroke="#E8590C" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 9.2v5.4" stroke="#1B2230" stroke-width="2.3" stroke-linecap="round"/><circle cx="12" cy="17.4" r="1.35" fill="#1B2230"/></svg>`,
   folder: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></svg>`,
   db: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>`,
   pen: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`,
@@ -168,6 +183,7 @@ const I = {
   help: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7M12 17h.01"/></svg>`,
   globe: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>`,
   plan: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="8.5" y="15" width="7" height="5" rx="1"/><path d="M6.5 9v3h11V9M12 12v3"/></svg>`,
+  cancel: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none"/></svg>`,
   input: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5M3 12h11M10 8l4 4-4 4"/></svg>`,
   kill: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>`,
   pulse: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-6 4 12 2.5-6H21"/></svg>`,
@@ -183,12 +199,18 @@ const I = {
 // категории ожиданий (§5.3)
 function waitCat(name) {
   const n = (name || "").toUpperCase();
-  if (n.startsWith("LCK_M_")) return "lock";
+  if (n.startsWith("LCK_M_") || n.startsWith("LOCK:")) return "lock";
+  if (n === "CPU") return "cpu";
+  if (n.startsWith("IO:")) return "disk";
+  if (n.startsWith("CLIENT:")) return "net";
+  if (n.startsWith("LWLOCK:BUFFER")) return "page";     // страницы буферного кэша
+  if (n.startsWith("LWLOCK:WAL") || n === "IPC:BUFFERIO") return "disk";    // запись WAL, чтение страницы другим процессом
+  if (/^IPC:(EXECUTEGATHER|BGWORKER|PARALLEL|MESSAGEQUEUE|HASH)/.test(n)) return "par";
   if (/^(PAGEIOLATCH|WRITELOG|IO_COMPLETION|ASYNC_IO_COMPLETION|LOGBUFFER)/.test(n)) return "disk";
   if (/^(RESOURCE_SEMAPHORE|CMEMTHREAD|MEMORY_ALLOCATION_EXT)/.test(n)) return "mem";
   if (/^(SOS_SCHEDULER_YIELD|THREADPOOL)/.test(n)) return "cpu";
   if (/^(CXPACKET|CXCONSUMER|CXSYNC_)/.test(n)) return "par";
-  if (/^(PAGELATCH|LATCH_)/.test(n)) return "latch";
+  if (/^(PAGELATCH|LATCH_)/.test(n)) return "page";
   if (n === "ASYNC_NETWORK_IO") return "net";
   return "oth";
 }
@@ -205,7 +227,8 @@ function titleOf(v) {
     case "newsession": return t("Новое наблюдение");
     case "session": return t("Идет наблюдение");
     case "current": return t("Текущие запросы");
-    case "heavy": return t("Тяжелые запросы");
+    case "load": return t("Нагрузка сервера");
+    case "dbinfo": return t("База данных");
     case "sessiondone": return t("Итог наблюдения · сессия {n}", {n: (v.folder.match(/^Session_\d{8}_\d{6}_(\d+)/) || [])[1]});
     default: return "";
   }
@@ -279,7 +302,7 @@ function tabIcon(v) {
   if (p && p.info.running) return `<span class="pulse"></span>`;
   if (S.st && v.report && S.st.reference === v.report) return I.star(13, true);
   return ({script: I.note, run: I.play, result: I.play, table: I.cols, compare: I.diff, newsession: I.eye, session: I.eye,
-           sessiondone: I.eye, current: I.pulse, heavy: I.flame}[v.k] || I.plus)(13);
+           sessiondone: I.eye, current: I.pulse, load: I.flame, dbinfo: I.db}[v.k] || I.plus)(13);
 }
 function renderTabs() {
   const bar = $("#tabs");
@@ -434,7 +457,7 @@ function findRun() {
   F.box.querySelector(".fcnt").textContent = q ? (F.hits.length ? `${F.i + 1} ${t("из")} ${F.hits.length}` : t("нет")) : "";
   if (q && $("#main [data-more]")) {               // часть строк не показана - ищется только по показанным
     F.box.querySelector(".fcnt").textContent += " · " + t("не все строки");
-    F.box.querySelector(".fcnt").title = t("Показаны не все строки таблиц: «Показать все» под таблицей");
+    F.box.querySelector(".fcnt").title = t("Показаны не все строки таблиц: «показать еще» под таблицей");
   }
 }
 function findGo(d, typing) {
@@ -624,7 +647,8 @@ function renderSide() {
     <div class="hint">${S.pair.length === 2 ? "" : hints.map(x => `<span>${x}</span>`).join("")}</div>
     <div class="menu">
       <a class="${v.k === "current" ? "on" : ""}" onclick="needConn()||go({k:'current'})">${I.pulse(18)}${t("Текущие запросы")}</a>
-      <a class="${v.k === "heavy" ? "on" : ""}" onclick="needConn()||go({k:'heavy'})">${I.flame(18)}${t("Тяжелые запросы")}</a>
+      <a class="${v.k === "load" ? "on" : ""}" onclick="needConn()||go({k:'load'})">${I.flame(18)}${t("Нагрузка сервера")}</a>
+      <a class="${v.k === "dbinfo" ? "on" : ""}" onclick="needConn()||go({k:'dbinfo'})">${I.db(18)}${t("База данных")}</a>
       <div class="mrow"><a onclick="api('open_help').catch(fail)">${I.help(18)}${t("Справка")}</a>${langButton()}</div>
       <span class="about">${h(ABOUT_TEXT)} <a class="lnk" onclick="api('open_url', ABOUT_LINK.url).catch(fail)">${h(ABOUT_LINK.text)}</a></span></div>`;
   // панель перерисовывается только при изменении: иначе клик, попавший на перерисовку (раз в секунду,
@@ -742,18 +766,22 @@ async function setFolder(f) {
 }
 
 // ================================================================ окна поверх
-function modal(html) { $("#modal").innerHTML = `<div class="overlay" onclick="if(event.target===this)closeModal()">${html}</div>`; const i = $("#modal input"); if (i) i.focus(); }
+// Закрытие кликом мимо окна: и нажатие, и отпускание кнопки - на затемнении. Иначе выделение текста в поле,
+// отпущенное за краем окна, закрывало его (click достается общему предку - затемнению).
+function modal(html) { $("#modal").innerHTML = `<div class="overlay" onmousedown="this._down=event.button===0&&event.target===this" onmouseup="if(this._down&&event.target===this)closeModal();this._down=false">${html}</div>`; const i = $("#modal input"); if (i) i.focus(); }
 function closeModal() { $("#modal").innerHTML = ""; }
 // Настройки (§5.6): сохраненные подключения - выпадающий список «сервер — база — логин», ниже поля
 // выбранного; значки «добавить как новое» и «убрать из списка», «Проверить» - вход и легкий запрос с
 // введенными значениями. «Сохранить» делает выбранное подключение активным (его использует CLI).
 // Пароли в интерфейс не приходят: пустое поле - «не менять».
+// Драйвер, сервер и база - поля той же строки подключения: правка поля переписывает в строке только свой
+// параметр, правка строки заново заполняет поля. Смена СУБД собирает строку заново из сервера и базы.
 const CONN_NEW = "__new";
 const connLabel = c => `${c.server || "?"} — ${c.database || "?"} — ${c.login || t("вход Windows")}`;
 async function connDialog() {
   let d;
   try { d = await api("connections"); } catch (e) { fail(e); return; }
-  window._cn = {items: d.items, active: d.active, sel: d.active || (d.items[0] || {}).id || null};
+  window._cn = {items: d.items, active: d.active, drivers: d.drivers, sel: d.active || (d.items[0] || {}).id || null};
   modal(`<div class="dlg" style="width:620px"><div class="dh"><h2>${t("Настройки")}</h2><span class="note">${t("Хранится в CompareQuery.json рядом с CompareQuery.py. Пароль не показывается и не попадает в логи и отчеты.")}</span></div>
     <div class="db">
       <section class="ignb">
@@ -761,11 +789,16 @@ async function connDialog() {
         <div style="display:flex;gap:6px;align-items:center"><select class="inp" id="cn-sel" style="flex:1;min-width:0" onchange="connPick(this.value)"></select>
           <span class="ib" title="${t("Добавить как новое подключение")}" onclick="connAdd()">${I.plus(17)}</span>
           <span class="ib" title="${t("Убрать подключение из списка")}" onclick="connDelete()">${I.trash(17)}</span></div>
-        <label class="field"><span class="lbl">${t("Строка подключения")}</span><input class="inp mono" id="cs" style="font-size:13px" oninput="connDirty()"></label>
+        <div class="cndrv"><span class="lbl">${t("Драйвер")}</span><span class="dbk" id="cn-kind"></span><select class="inp" id="cn-drv" onchange="connDriver(this.value)"></select></div>
+        <div style="display:flex;gap:12px">
+          <label class="field" style="flex:1"><span class="lbl">${t("Сервер")}</span><input class="inp" id="cn-srv" oninput="connWrite()"></label>
+          <label class="field" style="flex:1"><span class="lbl">${t("База данных")}</span><input class="inp" id="cn-db" oninput="connWrite()"></label>
+        </div>
         <div style="display:flex;gap:12px">
           <label class="field" style="flex:1"><span class="lbl">${t("Логин (пусто — вход Windows)")}</span><input class="inp" id="lg" oninput="connDirty()"></label>
           <label class="field" style="flex:1"><span class="lbl">${t("Пароль")}</span><input class="inp" id="pw" type="password" oninput="connDirty()"></label>
         </div>
+        <label class="field"><span class="lbl">${t("Строка подключения")}</span><input class="inp mono" id="cs" style="font-size:13px" oninput="connParse();connDirty()"></label>
         <div style="display:flex;gap:12px;align-items:center;min-height:32px"><a class="btn sm" onclick="connTest()">${t("Проверить")}</a><span class="cnres" id="cn-res"></span></div>
       </section>
       <label class="field"><span class="lbl">${t("Программа сравнения (diff) — путь к exe; пусто — найти самому")}${S.st.diff_found ? ": " + t("сейчас {name}", {name: h(S.st.diff_found)}) : ": " + t("не найдена")}</span><input class="inp" id="dt" value="${h(S.st.diff_tool || "")}" placeholder="C:\\Program Files\\WinMerge\\WinMergeU.exe"></label>
@@ -782,9 +815,129 @@ function connFill() {             // список и поля по _cn.sel
   $("#pw").value = "";
   $("#pw").placeholder = cur && cur.has_password ? "•••••••• " + t("(не менять)") : "";
   $("#cn-res").innerHTML = "";
-  if (!cur) $("#cs").focus();
+  Object.assign(c, {kind: "ms", driver: c.drivers.mssql[0] || "SQL Server"});   // для пустой строки
+  connParse();
+  if (!cur) $("#cn-srv").focus();
 }
 function connPick(id) { window._cn.sel = id === CONN_NEW ? null : id; connFill(); }
+
+// ---- строка подключения <-> поля. Вид СУБД - как cq.is_postgres. MS SQL Server - ODBC «Ключ=значение;»
+// (значение в {} с «}}» внутри), PostgreSQL - libpq «ключ=значение» через пробел (значение в '' с \)
+// или URI postgresql://... (у URI поля только показываются: правка - в строке).
+const PG_URI_RE = /^\s*postgres(?:ql)?:\/\//i;
+const isPgConn = cs => PG_URI_RE.test(cs) || (!/(?:^|;)\s*(?:driver|dsn)\s*=/i.test(cs) &&
+  /(?:^|\s)(?:host|hostaddr|dbname|port|user|sslmode|service)\s*=/i.test(cs));
+function odbcPairs(cs) {          // [[ключ, значение как в строке]]; хвост без «=» - [текст, null]
+  const out = [], n = cs.length;
+  let i = 0;
+  while (i < n) {
+    const eq = cs.indexOf("=", i);
+    if (eq < 0) { if (cs.slice(i).trim()) out.push([cs.slice(i).trim(), null]); break; }
+    let j = eq + 1;
+    while (j < n && cs[j] === " ") j++;
+    if (cs[j] === "{") {
+      for (j++; j < n; j++) if (cs[j] === "}") { if (cs[j + 1] === "}") j++; else { j++; break; } }
+    }
+    const semi = cs.indexOf(";", j), end = semi < 0 ? n : semi;
+    if (cs.slice(i, eq).trim()) out.push([cs.slice(i, eq).trim(), cs.slice(eq + 1, end).trim()]);
+    i = end + 1;
+  }
+  return out;
+}
+const odbcVal = v => v && v[0] === "{" ? v.slice(1, v.endsWith("}") ? -1 : undefined).replace(/}}/g, "}") : v || "";
+const odbcRaw = (v, brace) => brace || /[;{}]|^\s|\s$/.test(v) ? "{" + v.replace(/}/g, "}}") + "}" : v;
+const pgPairs = cs => [...cs.matchAll(/(\w+)\s*=\s*('(?:[^'\\]|\\.)*'?|\S*)/g)].map(m => [m[1], m[2]]);
+const pgVal = v => v && v[0] === "'" ? v.slice(1, v.length > 1 && v.endsWith("'") ? -1 : undefined).replace(/\\(.)/g, "$1") : v || "";
+const pgRaw = v => /^[^\s'\\]+$/.test(v) ? v : "'" + v.replace(/[\\']/g, "\\$&") + "'";
+const pairGet = (pairs, key) => (pairs.find(p => p[0].toLowerCase() === key) || [])[1];
+// Ставит значение параметра (пустое - убирает параметр). Нового параметра нет - встает после первого
+// найденного из after (иначе в начало): так новая строка идет в порядке драйвер, сервер, база.
+function pairSet(pairs, key, raw, after) {
+  const i = pairs.findIndex(p => p[0].toLowerCase() === key.toLowerCase());
+  if (raw === "") { if (i >= 0) pairs.splice(i, 1); return; }
+  if (i >= 0) { pairs[i][1] = raw; return; }
+  const a = after.map(k => pairs.findIndex(p => p[0].toLowerCase() === k)).find(x => x >= 0);
+  pairs.splice(a === undefined ? 0 : a + 1, 0, [key, raw]);
+}
+function connFields(cs) {         // {kind, driver, server, db, uri}; пустая строка - null
+  if (!cs.trim()) return null;
+  if (PG_URI_RE.test(cs)) {
+    let u = null;
+    try { u = new URL(cs.trim().replace(/^postgres(?:ql)?:/i, "http:")); } catch (e) { /* несколько хостов и т. п. */ }
+    return {kind: "pg", uri: true, server: u ? decodeURIComponent(u.hostname) + (u.port ? ":" + u.port : "") : "",
+            db: u ? decodeURIComponent(u.pathname.slice(1)) : ""};
+  }
+  if (isPgConn(cs)) {
+    const p = pgPairs(cs), port = pgVal(pairGet(p, "port"));
+    return {kind: "pg", server: (pgVal(pairGet(p, "host")) || pgVal(pairGet(p, "hostaddr"))) + (port ? ":" + port : ""), db: pgVal(pairGet(p, "dbname"))};
+  }
+  const p = odbcPairs(cs);
+  return {kind: "ms", driver: odbcVal(pairGet(p, "driver")), server: odbcVal(pairGet(p, "server")), db: odbcVal(pairGet(p, "database"))};
+}
+function connParse() {            // строка -> поля
+  const c = window._cn, f = connFields($("#cs").value);
+  c.uri = !!(f && f.uri);
+  if (f) { c.kind = f.kind; if (f.kind === "ms") c.driver = f.driver; }
+  $("#cn-srv").value = f ? f.server : "";
+  $("#cn-db").value = f ? f.db : "";
+  connShow();
+}
+function connWrite() {            // поля -> строка: меняются только свои параметры
+  const c = window._cn, srv = $("#cn-srv").value.trim(), db = $("#cn-db").value.trim();
+  let cs = $("#cs").value.trim();
+  if (c.kind === "pg") {
+    const p = pgPairs(cs), m = /^([^:]*):(\d+)$/.exec(srv);
+    pairSet(p, "host", pgRaw(m ? m[1] : srv).replace(/^''$/, ""), []);
+    pairSet(p, "port", m ? m[2] : "", ["host"]);
+    pairSet(p, "dbname", db && pgRaw(db), ["port", "host"]);
+    cs = p.map(x => x[0] + "=" + x[1]).join(" ");
+  } else {
+    const fresh = !cs, end = cs.endsWith(";"), p = odbcPairs(cs);
+    if (fresh && c.driver) pairSet(p, "Driver", odbcRaw(c.driver, true), []);
+    pairSet(p, "Server", srv && odbcRaw(srv), ["driver"]);
+    pairSet(p, "Database", db && odbcRaw(db), ["server", "driver"]);
+    if (fresh) p.push(["TrustServerCertificate", "yes"]);     // как в примере настроек CLI
+    cs = p.map(x => x[1] === null ? x[0] : x[0] + "=" + x[1]).join(";") + (end ? ";" : "");
+  }
+  $("#cs").value = cs;
+  connDirty();
+}
+function connDriver(v) {          // выбор в списке драйверов
+  const c = window._cn, kind = v === "pg" ? "pg" : "ms", cs = $("#cs").value.trim();
+  if (kind === "ms") c.driver = v.slice(3);
+  if (kind === c.kind) {
+    if (kind === "ms" && cs && c.driver) {
+      const p = odbcPairs(cs);
+      pairSet(p, "Driver", odbcRaw(c.driver, true), []);
+      $("#cs").value = p.map(x => x[1] === null ? x[0] : x[0] + "=" + x[1]).join(";") + (cs.endsWith(";") ? ";" : "");
+    }
+  } else {
+    // другая СУБД: прочие параметры у нее свои, строка собирается заново из сервера (без порта) и базы
+    c.kind = kind;
+    c.uri = false;
+    const srv = $("#cn-srv").value.trim();
+    $("#cn-srv").value = kind === "pg" ? srv.replace(/[,\\].*$/, "") : srv.replace(/:\d+$/, "");
+    $("#cs").value = "";
+    if ($("#cn-srv").value || $("#cn-db").value.trim()) connWrite();
+  }
+  connShow();
+  connDirty();
+}
+function connShow() {             // список драйверов, значок СУБД, доступность полей
+  const c = window._cn, d = c.drivers, low = s => (s || "").toLowerCase();
+  const ms = d.mssql.map(x => [x, true]);
+  if (c.kind === "ms" && c.driver && !d.mssql.some(x => low(x) === low(c.driver))) ms.push([c.driver, false]);
+  const msOpt = ([x, ok]) => `<option value="ms:${h(x)}"${c.kind === "ms" && low(x) === low(c.driver) ? " selected" : ""}>${h(x)}${ok ? "" : " — " + t("не установлен")}</option>`;
+  $("#cn-drv").innerHTML = `<optgroup label="MS SQL Server">${c.kind === "ms" && !c.driver ? `<option value="ms:" selected>${t("(драйвер не указан)")}</option>` : ""}${ms.map(msOpt).join("")}</optgroup>` +
+    `<optgroup label="PostgreSQL"><option value="pg"${c.kind === "pg" ? " selected" : ""}>psycopg${d.pg ? "" : " — " + t("не установлен")}</option></optgroup>`;
+  const k = $("#cn-kind");
+  k.className = "dbk " + c.kind;
+  k.innerHTML = I.db(13) + (c.kind === "pg" ? "PostgreSQL" : "MS SQL Server");
+  const tip = c.uri ? t("Строка в виде URI: сервер и базу меняйте в строке подключения") : "";
+  for (const id of ["#cn-srv", "#cn-db"]) { $(id).readOnly = c.uri; $(id).title = tip; }
+  $("#cn-srv").placeholder = c.kind === "pg" ? "localhost:5432" : "localhost\\SQLEXPRESS";
+  $("#cn-db").placeholder = c.kind === "pg" ? "postgres" : "master";
+}
 function connDirty() { $("#cn-res").innerHTML = ""; }
 // пустой пароль: у выбранного сохраненного - «не менять» (null), у нового - пустой
 const connPw = () => $("#pw").value !== "" ? $("#pw").value : (window._cn.sel ? null : "");
@@ -820,7 +973,8 @@ async function connTest() {
     const r = await api("test_connection", window._cn.sel, cs, $("#lg").value, connPw());
     if (!$("#cn-res")) return;
     res.className = "cnres ok";
-    res.textContent = t("Подключено за {ms} мс: {server} / {db} · {login} · SQL Server {version}", {ms: nf(r.ms), server: r.server || "?", db: r.database || "?", login: r.login || "?", version: [r.version, r.edition].filter(Boolean).join(" ")});
+    res.textContent = t("Подключено за {ms} мс: {server} / {db} · {login} · {version}", {ms: nf(r.ms), server: r.server || "?", db: r.database || "?", login: r.login || "?",
+      version: r.dbms === "PostgreSQL" ? r.edition || "PostgreSQL " + r.version : ["SQL Server", r.version, r.edition].filter(Boolean).join(" ")});
   } catch (e) {
     if (!$("#cn-res")) return;
     res.className = "cnres err";
@@ -1060,7 +1214,7 @@ async function autodetectDone(i) {
 function renderMain() {
   const v = S.view, m = $("#main");
   const f = {script: viewScript, run: viewRun, result: viewResult, table: viewTable, compare: viewCompare,
-             newsession: viewNewSession, session: viewSession, sessiondone: viewSessionDone, current: viewCurrent, heavy: viewHeavy}[v.k];
+             newsession: viewNewSession, session: viewSession, sessiondone: viewSessionDone, current: viewCurrent, load: viewLoad, dbinfo: viewDbInfo}[v.k];
   if (!f) {
     m.innerHTML = `<div class="empty" style="margin-top:26vh;display:flex;flex-direction:column;align-items:center;gap:22px"><span style="max-width:600px;font-size:15px;line-height:1.6;color:#2D3646">${t("Программа предназначена для сравнения результатов выполнения произвольных запросов. А также замера производительности и для оптимизации.")}</span>
       <span>${S.st && S.st.no_connection ? t("Для начала задайте подключения к базе") : t("Выберите скрипт или запуск слева")}</span></div>`;
@@ -1096,6 +1250,8 @@ async function viewScript(m, v) {
       <span class="popt">${t("Повторов")} <input class="num" id="p-rep" type="number" min="1" max="20" value="${p.repeat}" oninput="$('#p-warm').style.visibility=+this.value>1?'':'hidden'"><span class="pale" id="p-warm" style="font-size:12px${p.repeat > 1 ? "" : ";visibility:hidden"}">${t("первый — прогрев")}</span></span>
       <span class="popt" onclick="this.firstChild.classList.toggle('on')"><span class="sw${p.profile ? " on" : ""}" id="p-prof"></span>${t("Профиль операторов")}</span>
       <span class="popt" onclick="this.firstChild.classList.toggle('on')"><span class="sw${p.rollback ? " on" : ""}" id="p-rb"></span>${t("Откат в конце (--rollback)")}</span>
+      ${dbms().can_explain ? `<span class="popt" title="${t("Фактические планы операторов (auto_explain, нужны права суперпользователя; без них — отдельный прогон EXPLAIN ANALYZE, только с откатом). Включает профиль; время такого запуска завышено замером планов")}"><span class="sw${p.explain != null ? " on" : ""}" id="p-exp" onclick="explainToggle()"></span><span onclick="explainToggle()">${t("Планы (--explain)")}</span>
+        <span class="pale" style="font-size:12px">${t("от")}</span><input class="num" id="p-exms" type="number" min="0" value="${p.explain || 0}" title="${t("План пишется для операторов не короче стольких мс (0 — для всех)")}"><span class="pale" style="font-size:12px">${t("мс")}</span></span>` : ""}
       <span class="popt" onclick="ignSuggestToggle()" title="${t("Два прогона: первый — прогрев, после запуска откроется окно игнорируемых колонок с колонками, которые различаются между прогонами (можно поправить или отказаться). Параметры этого запуска не запоминаются")}"><span class="sw" id="p-ign"></span>${t("Предложить игнорируемые колонки")}</span>
       <span class="pale" style="margin-left:auto;font-size:12px" id="p-mem">${t("запоминаются для скрипта")}</span>
     </section>
@@ -1171,11 +1327,17 @@ function ignSuggestToggle() {
   $("#p-warm").style.visibility = +rep.value > 1 ? "" : "hidden";
   $("#p-mem").style.visibility = on ? "hidden" : "";
 }
+// «Планы (--explain)» включает и профиль (CLI включает его сам, переключатель показывает это)
+function explainToggle() {
+  const on = $("#p-exp").classList.toggle("on");
+  if (on) $("#p-prof").classList.add("on");
+}
 async function saveAndRun(queue) {
   try {
     await saveScript();
     const suggest = $("#p-ign").classList.contains("on");
-    const p = {repeat: suggest ? 2 : Math.max(1, +$("#p-rep").value || 1), profile: $("#p-prof").classList.contains("on"), rollback: $("#p-rb").classList.contains("on")};
+    const exp = $("#p-exp"), p = {repeat: suggest ? 2 : Math.max(1, +$("#p-rep").value || 1), profile: $("#p-prof").classList.contains("on"), rollback: $("#p-rb").classList.contains("on"),
+      explain: exp && exp.classList.contains("on") ? Math.max(0, +$("#p-exms").value || 0) : null};
     if (!suggest) {
       S.st.params = Object.assign({}, S.st.params, {[S.view.name]: p});
       api("set_gui", "params", S.st.params).catch(fail);
@@ -1200,7 +1362,8 @@ function startRun(name, p, force, quiet) {       // quiet - из очереди:
       <div class="df" style="border-top:none"><a class="btn" onclick="closeModal();startRun(..._pending, true)">${t("Запустить все равно")}</a><a class="btn pri" onclick="closeModal()">${t("Отмена")}</a></div></div>`);
     return;
   }
-  api("start_run", name, p.repeat, p.profile, p.rollback).then(info => {
+  // --explain - только у СУБД, которая его умеет (параметры скрипта могли запомниться с другим подключением)
+  api("start_run", name, p.repeat, p.profile, p.rollback, p.explain != null && dbms().can_explain ? p.explain : null).then(info => {
     S.procs[info.id] = {info, events: []};
     if (p.suggest) S.autodetect = {pid: info.id, script: name};      // по окончании - окно игнорируемых колонок
     if (quiet) renderSide(); else go({k: "run", pid: info.id});
@@ -1248,8 +1411,8 @@ function setRoll(el, text) {
 function kpiBox(id, label, small) {
   return `<div class="card kpi"><span class="lbl">${t(label)}</span><span class="v"><span id="${id}">—</span>${small ? ` <small>${t(small)}</small>` : ""}</span><span class="dur" id="${id}-d">&nbsp;</span></div>`;
 }
-function setKpi(id, v, ms) {
-  setRoll($("#" + id), nf(v ?? 0));
+function setKpi(id, v, ms) {          // v null - счетчика у сервера нет (CPU у PostgreSQL)
+  setRoll($("#" + id), v === null ? "—" : nf(v ?? 0));
   const d = $("#" + id + "-d");
   if (d) { if (ms && v >= 1000) setRoll(d, dur(v)); else { d.innerHTML = "&nbsp;"; delete d.dataset.v; } }
 }
@@ -1331,7 +1494,6 @@ function viewRun(m, v) {
     <section class="card tw${tcolCls("journal")}">${tcolBtn("journal")}<div class="tbar"><h2>${t("Журнал")}</h2><span class="lbl">${t("ход выполнения и сообщения SQL (PRINT, RAISERROR, ошибки) · время сервера · новые строки снизу")}</span></div>
       <div class="logbox" id="r-log"></div></section>`;
   S.live = {cards: [], log: 0};
-  if (!S.live.script) api("read_script", i.script + ".sql").then(s => { S.live.script = s.text; updateLive(); }).catch(() => {});
   updateLive();
 }
 function opcHtml(title, text, t0) {      // карточка оператора или батча в стопке (§5.10)
@@ -1398,11 +1560,6 @@ function stackLayout(st, k) {
     st.style.webkitMaskImage = st.style.maskImage = `linear-gradient(#000 0, #000 ${third + 6}px, transparent 100%)`;
   } else st.style.height = slotTop(k, slots - 1) + k.h + "px";
 }
-function batchText(script, k) {        // первые строки батча k из файла скрипта (для запуска без --profile)
-  if (!script) return "";
-  const parts = script.split(/^[ \t]*go[ \t]*(?:--.*)?$/im);
-  return (parts[k - 1] || "").trim().split("\n").slice(0, 2).join(" ");
-}
 function updateRun(p) {
   const i = p.info, ev = p.events, L = S.live;
   const start = ev.find(e => e.event === "start");
@@ -1460,7 +1617,7 @@ function updateRun(p) {
     const el = document.createElement("div");
     el.className = "opc";
     const title = e.event === "batch" ? `${t("Батч {k}", e)} <span>${t("из {of}", e)}${e.ignored ? " · " + t("служебный") : ""}</span>` : `${h(e.object)} <span>${t("строка {n}", {n: e.line})}</span>`;
-    const text = e.event === "batch" ? batchText(L.script, e.k) : e.text;
+    const text = e.text;      // у batch - начало батча (CLI делит файл сам: GO у MS SQL Server, ";" у PostgreSQL)
     el.innerHTML = opcHtml(title, text, evMs(e));
     L.cards.push(el);
     if (e.wait) setWait(el, e.wait, e.blocked_by, evMs(e));
@@ -1559,7 +1716,8 @@ async function viewResult(m, v) {
     return `<div class="res" onclick="go({k:'table',report:${h(JSON.stringify(v.report))},n:${n}})"><span class="nm">${t("Таблица {n}", {n})}</span><span class="lbl">${nf(tb.rows)} ${tp(tb.rows, "строка", "строки", "строк")} · ${tb.names.length} ${tp(tb.names.length, "колонка", "колонки", "колонок")}${tb.key.length ? " · " + t("ключ: {k}", {k: h(tb.key.filter(x => x !== "#dup").join(", "))}) : ""}</span>${diff}${tg}<span class="go">›</span></div>` +
       (differs ? `<div class="rdiff" id="rd-${n}"><div></div></div>` : "");
   }).join("") || `<div class="empty">${t("Таблиц нет")}</div>`;
-  const chips = [r.run["Прогонов"] ? t("повторов {n}", {n: r.run["Прогонов"]}) : "", r.run["Реестр"] ? t("профиль") : "", r.run["Режим"] || ""].filter(Boolean).map(x => `<span class="chip">${h(x)}</span>`).join("");
+  const chips = [r.run["Прогонов"] ? t("повторов {n}", {n: r.run["Прогонов"]}) : "", r.run["Реестр"] ? t("профиль") : "",
+    r.run["Планы (--explain)"] ? t("планы: {how}", {how: t(r.run["Планы (--explain)"])}) : "", r.run["Режим"] || ""].filter(Boolean).map(x => `<span class="chip">${h(x)}</span>`).join("");
   m.innerHTML = `
     <header class="head"><div style="display:flex;flex-direction:column;gap:8px">${backLine()}
       <h1>${t("Запуск")} ${tsText(ts)}</h1>
@@ -1577,7 +1735,8 @@ async function viewResult(m, v) {
     ${r.journal && r.journal.length ? journalCard(r.journal) : ""}
     ${r.aborted ? "" : lineCard(r)}
     ${r.registry ? tableCard("reg", t("Реестр операторов"), (r.run["Прогонов"] > 1 ? t("медиана прогонов 2–{n}", {n: r.run["Прогонов"]}) : "") + " · registry.csv", REG_COLS, r.registry, r.registry_dir + "\\registry.csv", r.registry_dir, "reg") : ""}
-    ${r.log ? tableCard("log", t("Журнал выполнения"), "log.csv", LOG_COLS, linkLog(r.log, r.registry || []), r.registry_dir + "\\log.csv", r.registry_dir, "log", "", LOG_COLLAPSE) : ""}`;
+    ${r.log ? tableCard("log", t("Журнал выполнения"), "log.csv", LOG_COLS, linkLog(r.log, r.registry || []), r.registry_dir + "\\log.csv", r.registry_dir, "log", "", LOG_COLLAPSE) : ""}
+    ${(r.extra_tables || []).map(x => extraCard(x, r.registry_dir)).join("")}`;
   const lb = m.querySelector(".logbox");       // журнал - на последних строках
   if (lb) lb.scrollTop = lb.scrollHeight;
   if (r.line && r.line.length >= 2) drawLine(r.line, v.report);
@@ -1833,8 +1992,11 @@ function tcolOn(key, dflt) { const c = S.st.tcollapsed || {}; return key in c ? 
 const tcolCls = (key, dflt) => " tc" + (tcolOn(key, dflt) ? " tcl" : "");
 const tcolBtn = key => `<span class="tcol" title="${t("Свернуть или развернуть")}" onclick="tcolToggle(this, ${h(JSON.stringify(key))})">${I.down(15)}</span>`;
 function tcolToggle(b, key) {
-  const card = b.closest(".tw"), on = !card.classList.contains("tcl");
-  S.st.tcollapsed = Object.assign({}, S.st.tcollapsed, {[key]: on});
+  const card = b.closest(".tw"), on = !card.classList.contains("tcl"), upd = {[key]: on};
+  // разделы «Нагрузки сервера» и «Базы данных»: открыт один, остальные сворачиваются
+  if (!on && card.classList.contains("sec"))
+    for (const c of document.querySelectorAll("section.sec:not(.tcl)")) { c.classList.add("tcl"); upd[c.id] = true; }
+  S.st.tcollapsed = Object.assign({}, S.st.tcollapsed, upd);
   api("set_gui", "tcollapsed", S.st.tcollapsed).catch(fail);
   if (on) { card.classList.add("tcl"); return; }
   // строки строятся при разворачивании: на это время вместо стрелки - значок ожидания (длинная таблица)
@@ -1864,17 +2026,20 @@ function tableCard(id, title, note, allCols, rows, file, dir, kind, extra, colla
     el._keys = allCols.map(c => c.k);
     el._render = () => {
       if (el.classList.contains("tcl")) return;
-      const s = S.sort[id], cols = arrangeCols(kind, el._keys).map(k => allCols.find(c => c.k === k));
+      // числовая колонка, пустая во всех строках, - счетчика у СУБД нет (PostgreSQL: память, чтения без pg_stat_statements)
+      const none = c => ["ms", "num"].includes(c.kind) && rows.length && rows.every(r => (r[c.k] ?? "") === "");
+      const s = S.sort[id], cols = arrangeCols(kind, el._keys).map(k => allCols.find(c => c.k === k)).filter(c => !none(c));
       el._cols = cols;
       const acts = rows.some(r => r["Текст"] || r["План"]), runs = rows.some(r => r["Запусков"]);
       const keysRef = `document.getElementById('tw-${id}')._keys`, rr = `document.getElementById('tw-${id}')._render`;
       el.querySelector(".tscroll").innerHTML = rows.length ? `<table class="t"><thead><tr>${acts ? "<th></th>" : ""}${cols.map(c =>
         `<th class="${["ms", "num"].includes(c.kind) ? "n" : ""}${c.kind === "op" ? " op" : ""}" ${thDrag(kind, keysRef, c.k, rr)} onclick="sortBy('${id}', ${h(JSON.stringify(c.k))})">${c.kind === "op" && runs ? `<span class="opl"><span>${h(t(c.t))}${s && s.col === c.k ? `<span class="s">${s.dir > 0 ? "▲" : "▼"}</span>` : ""}</span><span class="runs" title="${t("Сортировать по числу запусков")}" onclick="event.stopPropagation();sortBy('${id}', 'Запусков')">${t("запусков")}${s && s.col === "Запусков" ? `<span class="s">${s.dir > 0 ? "▲" : "▼"}</span>` : ""}</span></span>` : h(t(c.t)).replace("\n", "<br>") + (s && s.col === c.k ? `<span class="s">${s.dir > 0 ? "▲" : "▼"}</span>` : "")}</th>`).join("")}</tr></thead>
-        <tbody>${sortRows(id, cols, rows).slice(0, el._all ? Infinity : TABLE_SHOW).map(r => "<tr>" + (acts ? fileActs(r, dir) : "") + cols.map(c => cellHtml(r, c, dir)).join("") + "</tr>").join("")}</tbody></table>` : `<div class="empty">${t("Строк нет")}</div>`;
+        <tbody>${sortRows(id, cols, rows).slice(0, el._show || TABLE_SHOW).map(r => "<tr>" + (acts ? fileActs(r, dir) : "") + cols.map(c => cellHtml(r, c, dir)).join("") + "</tr>").join("")}</tbody></table>` : `<div class="empty">${t("Строк нет")}</div>`;
       hbar(el.querySelector(".tscroll"));
-      // длинная таблица - первые TABLE_SHOW строк (раскладка 3600 строк ~1 с); сортировка и копирование - по всем
-      el.querySelector(".tmore").innerHTML = !el._all && rows.length > TABLE_SHOW
-        ? `<a class="btn sm" data-more onclick="const e=document.getElementById('tw-${id}');e._all=true;e._render()">${t("Показать все {n}", {n: nf(rows.length)})}</a><span class="pale">${t("показаны первые {n}", {n: nf(TABLE_SHOW)})}</span>` : "";
+      // длинная таблица - первые TABLE_SHOW строк и «показать еще» (раскладка 3600 строк ~1 с); сортировка и копирование - по всем
+      const lim = el._show || TABLE_SHOW;
+      el.querySelector(".tmore").innerHTML = rows.length > lim
+        ? tableMore(lim, rows.length, `const e=document.getElementById('tw-${id}');e._show=${lim + TABLE_SHOW};e._render()`).replace(/^<div class="tmore stick">|<\/div>$/g, "") : "";
     };
     el._rows = rows;
     el._render();
@@ -1887,7 +2052,16 @@ function tableCard(id, title, note, allCols, rows, file, dir, kind, extra, colla
       <span class="ib" title="${t("Колонки: показать или скрыть")}" onclick="colsDialog(${h(JSON.stringify(kind))}, document.getElementById('tw-${id}')._keys, ${titles}, document.getElementById('tw-${id}')._render)">${I.cols(15)}</span></div>
     <div class="tscroll"></div><div class="tmore"></div></section>`;
 }
-const TABLE_SHOW = 500;          // строк таблицы реестра/журнала до кнопки «Показать все»
+// Остальные таблицы папки реестра (PostgreSQL): операторы внутри функций (--explain), функции и таблицы
+// (--profile). Колонки - из заголовка файла: числовые - по значениям; «План» - кнопкой в начале строки.
+const EXTRA_TITLES = {"nested.csv": "Операторы внутри функций", "functions.csv": "Функции", "tables.csv": "Таблицы"};
+function extraCard(x, dir) {
+  const isNum = k => k !== "Хэш" && x.rows.some(r => r[k] !== "") && x.rows.every(r => r[k] === "" || /^-?\d+(\.\d+)?$/.test(r[k]));
+  const cols = x.header.filter(k => k !== "План").map(k => ({k, t: k, kind: isNum(k) ? "num" : ""}));
+  const id = "x" + x.name.replace(/\W/g, "");
+  return tableCard(id, t(EXTRA_TITLES[x.name] || x.name), x.name, cols, x.rows, x.file, dir, id, "", LOG_COLLAPSE);
+}
+const TABLE_SHOW = 500;          // строк любой таблицы до кнопки «показать еще» (tableCard, srvTable, CSV)
 const LOG_COLLAPSE = 100;        // журнал длиннее - свернут по умолчанию
 function fileActs(r, dir) {        // кнопки строки реестра: текст оператора (.sql) и план (.sqlplan)
   const b = (f, title, icon) => f ? `<span class="ib" title="${t(title)}" onclick="api('open_path', ${h(JSON.stringify(dir + "\\" + f))}).catch(fail)">${icon}</span>` : "";
@@ -1937,7 +2111,7 @@ async function viewTable(m, v) {
       <div class="row">${ref && ref !== v.report ? diffButton(t("Сравнить с опорным"), "table", [ref, v.report, v.n]) : ""}
       <a class="btn" onclick="go({k:'result',report:${h(JSON.stringify(v.report))}})" title="${t("Итог запуска, из которого эта таблица")}">${I.back(16)}${t("К запуску {when}", {when: h(tsText(ts))})}</a></div></header>
     <section class="card tw show" style="flex:1 0 auto;min-height:300px">
-      <div class="tbar"><span class="fl">${I.search(15)}<input id="t-flt" placeholder="${t("Фильтр строк (Ctrl+F)")}" value="${h(v.filter || "")}"></span><span class="lbl" id="t-cnt"></span><span class="pale" style="font-size:12px" id="t-file"></span></div>
+      <div class="tbar"><span class="fl">${I.search(15)}<input id="t-flt" placeholder="${t("Фильтр строк (Ctrl+F)")}" value="${h(v.filter || "")}">${FLX}</span><span class="lbl" id="t-cnt"></span><span class="pale" style="font-size:12px" id="t-file"></span></div>
       <div class="acts"><span class="ib" title="${t("Скопировать для Excel")}" onclick="copyCsvTsv()">${I.copy(15)}</span>
         <span class="ib" title="${t("Показать в папке")}" onclick="api('show_in_folder', S.live.tfile)">${I.folder(15)}</span>
         <span class="ib" title="${t("Открыть CSV")}" onclick="api('open_path', S.live.tfile).catch(fail)">${I.open(15)}</span>
@@ -1978,7 +2152,7 @@ function renderCsv() {
   $("#t-body").innerHTML = `<table class="t"><thead><tr>${idx.map(i => `<th ${thDrag(kind, "S.live.tdata.columns", d.columns[i], "renderCsv")}>${h(d.columns[i])}</th>`).join("")}</tr></thead><tbody>${d.rows.map(r =>
     "<tr>" + idx.map(i => `<td${keyCols.has(d.columns[i]) ? ' class="b"' : ""}>${mark(r[i])}</td>`).join("") + "</tr>").join("")}</tbody></table>`;
   const left = d.matched - d.rows.length;
-  $("#t-more").innerHTML = left > 0 ? `<div class="empty">${t("Показаны первые {n} строк из {of}", {n: nf(d.rows.length), of: nf(d.matched)})} · <a onclick="loadCsv(S.view, true)">${t("показать еще {n}", {n: nf(Math.min(left, 500))})}</a></div>` : "";
+  $("#t-more").innerHTML = left > 0 ? `<div class="empty">${t("Показаны первые {n} строк из {of}", {n: nf(d.rows.length), of: nf(d.matched)})} · <a onclick="loadCsv(S.view, true)">${t("показать еще {n}", {n: nf(Math.min(left, TABLE_SHOW))})}</a></div>` : "";
   hbar($("#t-body"));
 }
 function csvCols() {
@@ -1997,6 +2171,16 @@ function copyCsvTsv() {
 // kind/args - как у _diff_files в CompareQueryGUI.py: reports, scripts, table, script
 function diffButton(label, kind, args, sm) {
   return `<a class="btn${sm ? " sm" : ""}" data-diff="${h(JSON.stringify([kind, args]))}" onclick="runDiff(this)">${I.diff(sm ? 15 : 17)}${label}</a>`;
+}
+// только отличающиеся строки таблицы: два CSV, папка с ними и поверх - программа сравнения (diff_rows)
+async function diffRows(a, b, n, btn) {
+  btn.setAttribute("disabled", "");
+  try {
+    const r = await api("diff_rows", a, b, n);
+    toast(r.tool ? t("Отличающихся строк: в A {a}, в B {b}", {a: nf(r.a), b: nf(r.b)})
+      : t("Программа сравнения не найдена: файлы отличий — в открытой папке ({a}, {b})", {a: r.files[0], b: r.files[1]}));
+  } catch (e) { fail(e); }
+  btn.removeAttribute("disabled");
 }
 function hydrateDiffButtons() {
   document.querySelectorAll("[data-diff]:not([title])").forEach(async b => {
@@ -2062,7 +2246,7 @@ async function viewCompare(m, v) {
     const col = ignCol(tb), key = (tb.lines.find(x => x.startsWith("Ключ")) || "").replace(/;.*$/, "");
     const both = !tb.state.startsWith("есть только");
     return `<section class="card tw show${tcolCls("cmptable")}">${tcolBtn("cmptable")}<div class="tbar" style="flex-wrap:wrap"><h2>${t("Таблица {n}", {n: tb.n})}</h2><span class="chip c-diff">${h(t(tb.state))}</span><span class="lbl">${h(key)}</span>
-      <span class="row" style="width:100%;margin-top:4px">${both ? diffButton(t("Сравнить CSV"), "table", [v.a, v.b, tb.n], true) : ""}${col ? `<a class="btn sm" onclick="ignoreDialog(${h(JSON.stringify(d.scripts[1]))}, {cols: [${h(JSON.stringify(col))}], table: '${tb.n}'})">${t("Игнорировать {col}…", {col: h(col)})}</a>` : ""}</span></div>
+      <span class="row" style="width:100%;margin-top:4px">${both ? diffButton(t("Сравнить CSV"), "table", [v.a, v.b, tb.n], true) + `<a class="btn sm" title="${t("Два CSV только с отличающимися строками (рядом с CSV таблицы) — в программе сравнения")}" onclick="diffRows(${h(JSON.stringify(v.a))}, ${h(JSON.stringify(v.b))}, ${tb.n}, this)">${I.diff(15)}${t("Сравнить отличия")}</a>` : ""}${col ? `<a class="btn sm" onclick="ignoreDialog(${h(JSON.stringify(d.scripts[1]))}, {cols: [${h(JSON.stringify(col))}], table: '${tb.n}'})">${t("Игнорировать {col}…", {col: h(col)})}</a>` : ""}</span></div>
       <div id="cd-${tb.n}">${both ? `<div class="empty"><span class="pulse"></span> ${t("Примеры строк…")}</div>` : `<div class="dsum">${tb.lines.map(x => `<span>${h(x)}</span>`).join("")}</div>`}</div></section>`;
   }).join("");
   const same = d.tables.filter(tb => tb.state === "идентична");
@@ -2174,23 +2358,33 @@ async function viewSessionCompare(m, v) {
 // (сортировка как чисел, выравнивание вправо). Сортировка - клик по заголовку (S.live.<id>.sort).
 // Колонки без ключа (кнопки строки) - всегда первые; остальные - в порядке и с видимостью вида id
 // (colPrefs, окно «Колонки» - colsBtn(id, "S.live." + id)), перетаскиваются за заголовок.
+// Длинная таблица - первые TABLE_SHOW строк после сортировки и «показать еще» (S.live.<id>.show): правило
+// для всех таблиц GUI, раскладка тысяч строк занимает секунды.
 function srvTable(id, cols, rows, rowAttr) {
   const L = S.live[id], s = L.sort;
   L.keys = cols.filter(c => c[0]).map(c => c[0]);
   const tt = x => Array.isArray(x) ? t(x[0], x[1]) : t(x);      // заголовок: строка или [шаблон, подстановки]
   L.titles = Object.fromEntries(cols.filter(c => c[0]).map(c => [c[0], tt(c[1]).replace(/<br>/g, " ").replace(/-\s/g, "")]));
   cols = cols.filter(c => !c[0]).concat(arrangeCols(id, L.keys).map(k => cols.find(c => c[0] === k)));
-  if (s) {
-    const c = cols.find(x => x[0] === s.k), num = c && c[2] === "n", val = c && (c[4] || (r => r[c[0]]));
-    rows = [...rows].sort((a, b) => {
-      const x = val(a), y = val(b);
-      if (x == null || y == null) return (x == null) - (y == null);
-      return (num ? x - y : String(x).localeCompare(String(y), "ru")) * s.dir;
-    });
-  }
+  rows = srvSorted(id, cols, rows);
+  const lim = L.show || TABLE_SHOW, more = rows.length - lim;
+  if (more > 0) rows = rows.slice(0, lim);
   return `<table class="t compact srv"><thead><tr>${cols.map(([k, title, kind]) => k
     ? `<th class="${kind === "n" ? "n" : ""}${L.hot === k ? " hot" : ""}" ${thDrag(id, `S.live.${id}.keys`, k, `S.live.${id}.render`)} onclick="srvSort('${id}', '${k}')">${tt(title)}${s && s.k === k ? `<span class="s">${s.dir > 0 ? "▲" : "▼"}</span>` : ""}</th>`
-    : `<th${title ? ' class="tight"' : ""}>${title ? tt(title) : ""}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr${rowAttr ? rowAttr(r) : ""}>${cols.map(c => c[3](r)).join("")}</tr>`).join("")}</tbody></table>`;
+    : `<th${title ? ' class="tight"' : ""}>${title ? tt(title) : ""}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr${rowAttr ? rowAttr(r) : ""}>${cols.map(c => c[3](r)).join("")}</tr>`).join("")}</tbody></table>` +
+    (more > 0 ? tableMore(lim, lim + more, `S.live.${id}.show=${lim + TABLE_SHOW};S.live.${id}.render()`) : "");
+}
+// строка под длинной таблицей: показано n из all, «показать еще» (не больше TABLE_SHOW)
+const tableMore = (n, all, on) => `<div class="tmore stick"><span class="pale">${t("Показаны первые {n} строк из {of}", {n: nf(n), of: nf(all)})}</span><a class="btn sm" data-more onclick="${on}">${t("показать еще {n}", {n: nf(Math.min(all - n, TABLE_SHOW))})}</a></div>`;
+function srvSorted(id, cols, rows) {     // строки в порядке сортировки S.live.<id>.sort
+  const s = S.live[id].sort, c = s && cols.find(x => x[0] === s.k);
+  if (!c) return rows;
+  const num = c[2] === "n", val = c[4] || (r => r[c[0]]);
+  return [...rows].sort((a, b) => {
+    const x = val(a), y = val(b);
+    if (x == null || y == null) return (x == null) - (y == null);
+    return (num ? x - y : String(x).localeCompare(String(y), "ru")) * s.dir;
+  });
 }
 function srvSort(id, k) {
   const L = S.live[id], s = L.sort;
@@ -2202,13 +2396,15 @@ const opCell = (obj, line, stmt) => `<td class="op b" data-op="${h(obj ? obj + (
 const msCell = v => `<td class="n">${v == null ? "" : nf(v)}${v >= 1000 ? `<span class="sv">${dur(v)}</span>` : ""}</td>`;
 // Текст запроса: выделить, скопировать, открыть программой. file - {path, plan}: текст оператора из
 // файла реестра - еще «Показать в папке» и план (лежит рядом с текстом; нет - значок бледный)
-function textDialog(title, text, name, file) {
-  window._txt = {text, name, file};
+// db - база оператора для оценочного плана (PostgreSQL; null - база подключения)
+function textDialog(title, text, name, file, db = null, plan = true) {     // plan - кнопка оценочного плана
+  window._txt = {text, name, file, db};
+  const est = plan && dbms().can_estimate && text ? `<a class="btn" title="${t("EXPLAIN без выполнения: план, который построит сервер (с параметрами $1 — общий план, PostgreSQL 16+)")}" onclick="api('estimate_plan', _txt.text, _txt.db, _txt.name).catch(fail)">${I.plan(16)}${t("Оценочный план")}</a>` : "";
   modal(`<div class="dlg" style="width:min(1000px,90vw)"><div class="dh"><h2>${h(title)}</h2></div>
     <div class="db"><pre class="rep sqlbox">${text ? hlSql(text) : `<span class="pale">${t("текста нет")}</span>`}</pre></div>
     <div class="df" style="align-items:center"><span class="row" style="margin-right:auto">${file ? `<span class="ib" title="${t("Показать в папке")}" onclick="api('show_in_folder', _txt.file.path)">${I.folder(17)}</span>` +
         (file.plan ? `<span class="ib" title="${t("План")}" onclick="api('open_path', _txt.file.plan).catch(fail)">${I.plan(17)}</span>` : `<span class="ib dis" title="${t("Плана нет")}">${I.plan(17)}</span>`) : ""}
-      <span class="ib" title="${t("Скопировать")}" onclick="navigator.clipboard.writeText(_txt.text).then(() => toast(t('Скопировано')), fail)">${I.copy(17)}</span></span><a class="btn" onclick="api('open_text', _txt.name, _txt.text).catch(fail)">${I.open(16)}${t("Открыть в программе")}</a><a class="btn pri" onclick="closeModal()">${t("Закрыть")}</a></div></div>`);
+      <span class="ib" title="${t("Скопировать")}" onclick="navigator.clipboard.writeText(_txt.text).then(() => toast(t('Скопировано')), fail)">${I.copy(17)}</span></span>${est}<a class="btn" onclick="api('open_text', _txt.name, _txt.text).catch(fail)">${I.open(16)}${t("Открыть в программе")}</a><a class="btn pri" onclick="closeModal()">${t("Закрыть")}</a></div></div>`);
 }
 
 // ---------------------------------------------------------------- текущие запросы (§5.20)
@@ -2216,15 +2412,16 @@ function textDialog(title, text, name, file) {
 // обновления; клик по нему - пауза/продолжить. Пока пользователь выделяет текст в таблице, таблица
 // не перерисовывается.
 const CUR_S = 4, KILL_TRUST_MS = 10000;
-function viewCurrent(m) {
+function viewCurrent(m, v) {
   m.innerHTML = `
     <header class="head"><div style="display:flex;flex-direction:column;gap:8px">${backLine()}<h1 style="display:flex;align-items:center;gap:14px">${t("Текущие запросы")} <span id="cq-ring"></span></h1>
       <span class="lbl" id="cq-info">${t("пользовательские сессии с запросом и сессии, которые блокируют других · обновление раз в {n} с", {n: CUR_S})}</span></div></header>
     <section class="kpis k6" id="cq-kpis">${kpiBox("cq-s", "Сессий пользователей")}${kpiBox("cq-r", "Выполняется запросов")}${kpiBox("cq-b", "Ждут блокировку")}${kpiBox("cq-m", "Ждут память")}${kpiBox("cq-q", "Очередь на процессор")}${kpiBox("cq-l", "Самый долгий запрос")}</section>
-    <section class="card tw show${tcolCls("cur")}">${tcolBtn("cur")}<div class="tbar"><span class="fl">${I.search(15)}<input id="cq-flt" placeholder="${t("Фильтр: база, программа, логин, текст")}"></span><span class="lbl" id="cq-cnt"></span></div>
+    <section class="card tw show${tcolCls("cur")}">${tcolBtn("cur")}<div class="tbar"><span class="fl">${I.search(15)}<input id="cq-flt" placeholder="${t("Фильтр: база, программа, логин, текст")}">${FLX}</span><span class="lbl" id="cq-cnt"></span></div>
       <div class="acts">${colsBtn("cur", "S.live.cur")}</div>
       <div class="tscroll" id="cq-body"><div class="empty">${t("Загрузка…")}</div></div></section>`;
-  const L = S.live.cur = {paused: false, sort: {k: "elapsed", dir: -1}, filter: "", render: curRender};
+  const L = S.live.cur = {paused: false, sort: {k: v.sort || "elapsed", dir: -1}, filter: (v.filter || "").toLowerCase(), hl: v.hl, render: curRender};
+  $("#cq-flt").value = v.filter || "";
   $("#cq-flt").addEventListener("input", e => { L.filter = e.target.value.trim().toLowerCase(); curRender(); });
   curLoad();
 }
@@ -2266,16 +2463,18 @@ function curRender() {
   setKpi("cq-s", d.sessions ?? 0);
   setKpi("cq-r", active.length);
   setKpi("cq-b", rows.filter(r => r.blocked_by > 0 && r.blocked_by !== r.spid).length);
-  setKpi("cq-m", d.memory_waits ?? 0);
-  setKpi("cq-q", d.runnable ?? 0);
+  setKpi("cq-m", d.memory_waits);       // null - у СУБД нет (PostgreSQL): "—"
+  setKpi("cq-q", d.runnable);
   setRoll($("#cq-l"), clock(Math.max(0, ...active.map(r => r.elapsed || 0))));
   for (const [id, bad] of [["cq-b", rows.some(r => r.blocked_by > 0 && r.blocked_by !== r.spid)], ["cq-m", d.memory_waits > 0]]) $("#" + id).closest(".kpi").classList.toggle("warn", bad);
   if (d.server_time) $("#cq-info").textContent = t("пользовательские сессии с запросом и сессии, которые блокируют других · обновление раз в {n} с", {n: CUR_S}) + " · " + t("сервер {time}", {time: d.server_time.slice(11)});
   const shown = rows.filter(r => srvMatch(r, L.filter, ["db", "program", "login", "host", "object", "statement", "spid", "wait", "input"]));
   $("#cq-cnt").textContent = shown.length !== rows.length ? t("{n} из {of}", {n: shown.length, of: rows.length}) : String(shown.length);
   const ib = (title, on, icon, extra = "") => `<span class="ib${extra}" title="${t(title)}" onclick="${on}">${icon}</span>`;
-  const cols = [
-    [null, "", null, r => `<td class="acts2">${ib("Текст запроса", `curText(${r.spid})`, I.note(14))}${r.plan_handle ? ib("План", `curPlan(${r.spid})`, I.plan(14)) : ""}${ib("Исходный запрос: что прислал клиент", `curInput(${r.spid})`, I.input(14))}${ib("Наблюдать сессию", `startSession(${r.spid})`, I.eye(14))}${ib("KILL — прервать сессию", `curKill(${r.spid})`, I.kill(14), " danger")}</td>`],
+  const inbuf = !(dbms().absent.current || []).includes("input");     // у PostgreSQL исходный запрос и есть текст
+  const cancel = dbms().can_cancel;     // отменить запрос, не закрывая сессию (PostgreSQL)
+  const cols = absentCols("current", [
+    [null, "", null, r => `<td class="acts2">${ib("Текст запроса", `curText(${r.spid})`, I.note(14))}${r.plan_handle ? ib("План", `curPlan(${r.spid})`, I.plan(14)) : ""}${inbuf ? ib("Исходный запрос: что прислал клиент", `curInput(${r.spid})`, I.input(14)) : ""}${ib("Наблюдать сессию", `startSession(${r.spid})`, I.eye(14))}${ib("К экрану «База данных», таблица «Временные данные»: эта сессия", goJs({k: "dbinfo", spid: r.spid}), I.db(14))}${cancel && r.status ? ib("Отменить запрос: сессия остается", `curCancel(${r.spid})`, I.cancel(14), " danger") : ""}${ib("KILL — прервать сессию", `curKill(${r.spid})`, I.kill(14), " danger")}</td>`],
     ["spid", "№", "n", r => `<td class="n b">${r.spid}</td>`],
     ["db", "База", "", r => `<td>${h(r.db)}</td>`],
     ["object", "Оператор", "", r => r.status ? opCell(r.object, r.line, r.statement)
@@ -2289,22 +2488,23 @@ function curRender() {
     ["reads", "Логических<br>чтений", "n", r => `<td class="n">${nf(r.reads)}</td>`],
     ["writes", "Записей", "n", r => `<td class="n">${nf(r.writes)}</td>`],
     ["memory", "Память<br>МБ", "n", r => `<td class="n">${r.memory ? nf(r.memory) : ""}</td>`],
-    ["wait", "Ожидание", "", r => r.wait ? `<td>${waitHtml(r.wait)}<span class="sv wi">${nf(r.wait_ms)} ${t("мс")}</span></td>` : "<td></td>"],
+    ["wait", "Ожидание", "", r => r.wait ? `<td>${waitHtml(r.wait)}${r.wait_ms != null ? `<span class="sv wi">${nf(r.wait_ms)} ${t("мс")}</span>` : ""}</td>` : "<td></td>"],
     ["blocked_by", "Ждет<br>сессию", "n", r => `<td class="n">${r.blocked_by > 0 && r.blocked_by !== r.spid ? `<b class="hotv">${r.blocked_by}</b>` : ""}</td>`],
     ["blocks", "Блоки-<br>рует", "n", r => `<td class="n">${r.blocks ? `<b class="hotv">${r.blocks}</b>` : ""}</td>`],
     ["trans", "Транз-<br>акций", "n", r => `<td class="n">${r.trans || ""}</td>`],
     ["program", "Программа", "", r => `<td class="clip" title="${h(r.program)}">${h(r.program)}</td>`],
-  ];
+  ]);
   L.hot = null;
   L.byId = Object.fromEntries(rows.map(r => [r.spid, r]));
-  body.innerHTML = shown.length ? srvTable("cur", cols, shown, r => r.blocks ? ' class="blocker"' : r.blocked_by > 0 && r.blocked_by !== r.spid ? ' class="blocked"' : "")
+  body.innerHTML = shown.length ? srvTable("cur", cols, shown, r => ` class="${r.spid === L.hl ? "hl " : ""}${r.blocks ? "blocker" : r.blocked_by > 0 && r.blocked_by !== r.spid ? "blocked" : ""}"`)
     : `<div class="empty">${rows.length ? t("Нет строк по фильтру") : t("Сейчас на сервере нет пользовательских запросов")}</div>`;
   hbar(body);
+  if (L.hl && !L.hlDone) { L.hlDone = true; hlRow(body); }
 }
 const curRow = spid => S.live.cur && S.live.cur.byId[spid];
 function curText(spid) {
   const r = curRow(spid);
-  if (r) textDialog(r.status ? `${t("Сессия {n}", {n: spid})} · ${r.object || t("запрос")}${r.line ? ":" + r.line : ""}` : `${t("Сессия {n}", {n: spid})} · ${t("последний запрос")}`, r.status ? r.statement : r.last_text, `session_${spid}`);
+  if (r) textDialog(r.status ? `${t("Сессия {n}", {n: spid})} · ${r.object || t("запрос")}${r.line ? ":" + r.line : ""}` : `${t("Сессия {n}", {n: spid})} · ${t("последний запрос")}`, r.status ? r.text || r.statement : r.last_text, `session_${spid}`, null, r.db);
 }
 function curPlan(spid) { const r = curRow(spid); if (r) api("open_plan", r.plan_handle, r.start, r.end, `session_${spid}`).catch(fail); }
 async function curInput(spid) {
@@ -2321,50 +2521,191 @@ async function doKill(spid) {
   S.killTrust = Date.now() + KILL_TRUST_MS;
   try { await api("kill_session", spid); toast(t("Сессия {n} прервана", {n: spid})); curLoad(); } catch (e) { fail(e); }
 }
+// Отмена запроса (PostgreSQL, pg_cancel_backend): так же с подтверждением, свое окно доверия
+function curCancel(spid) {
+  if (Date.now() < (S.cancelTrust || 0)) { doCancel(spid); return; }
+  const r = curRow(spid) || {};
+  modal(`<div class="dlg" style="width:460px"><div class="dh"><h2>${t("Отменить запрос сессии {n}?", {n: spid})}</h2><span class="note">${h([r.login, r.host, r.program].filter(Boolean).join(" · "))}. ${t("Текущий запрос прервется с ошибкой, сессия останется; если запрос был в транзакции, программе придется ее откатить. Следующие 10 с отмена выполняется без вопроса.")}</span></div>
+    <div class="df"><a class="btn pri" onclick="closeModal()">${t("Отмена")}</a><a class="btn dark" style="color:#FFF" onclick="closeModal();doCancel(${spid})">${t("Отменить запрос")}</a></div></div>`);
+}
+async function doCancel(spid) {
+  S.cancelTrust = Date.now() + KILL_TRUST_MS;
+  try { await api("cancel_query", spid); toast(t("Запрос сессии {n} отменен", {n: spid})); curLoad(); } catch (e) { fail(e); }
+}
 
-// ---------------------------------------------------------------- тяжелые запросы (§5.21)
-// Статистика кэша планов сервера: один запрос по открытию экрана и по кнопке "Обновить".
+// ---------------------------------------------------------------- разделы «Нагрузки сервера» и «Базы данных»
+// Раздел - сворачиваемая карточка (ключ свернутости "s-<раздел>"): название и мелко-бледно - откуда данные.
+// Свернутый раздел не запрашивается: данные - при разворачивании (card._render) и по «Обновить» (только открытые).
 const HEAVY_METRICS = [["cpu", "CPU всего"], ["cpu_avg", "CPU на выполнение"], ["time", "Время всего"], ["time_avg", "Время на выполнение"],
   ["max_time", "Наибольшее время"], ["reads", "Чтений всего"], ["reads_avg", "Чтений на выполнение"], ["writes", "Записей всего"], ["execs", "Выполнений"]];
 const HEAVY_HOT = {cpu: "cpu", cpu_avg: "cpu_avg", time: "time", time_avg: "time_avg", max_time: "max_time", reads: "reads", reads_avg: "reads_avg", writes: "writes", execs: "execs"};
-function viewHeavy(m) {
-  const o = S.heavy ||= {order: "cpu", hours: 0, top: 100};
-  const sel = (id, opts, v) => `<select class="inp" id="${id}">${opts.map(([k, lbl]) => `<option value="${k}"${String(k) === String(v) ? " selected" : ""}>${t(lbl)}</option>`).join("")}</select>`;
-  m.innerHTML = `
-    <header class="head"><div style="display:flex;flex-direction:column;gap:8px">${backLine()}<h1>${t("Тяжелые запросы")}</h1>
-      <span class="lbl">${t("статистика кэша планов сервера: что больше всего нагружает сервер. Числа накоплены с момента, когда план попал в кэш (колонка «В кэше с»)")}</span></div></header>
-    <section class="card" style="padding:14px 20px;display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px">
-      <label class="field"><span class="lbl">${t("Сортировать по")}</span>${sel("hv-order", HEAVY_METRICS, o.order)}</label>
-      <label class="field"><span class="lbl">${t("Выполнялись")}</span>${sel("hv-hours", [[0, "за все время в кэше"], [1, "за последний час"], [24, "за последние сутки"], [168, "за последнюю неделю"]], o.hours)}</label>
-      <label class="field"><span class="lbl">${t("Сколько")}</span>${sel("hv-top", [[50, "50"], [100, "100"], [200, "200"]], o.top)}</label>
-      <a class="btn pri" onclick="heavyLoad()">${I.refresh(16)}${t("Обновить")}</a>
-      <span class="pale" style="font-size:12px;margin-left:auto;max-width:360px">${t("Один запрос к статистике сервера по кнопке; планы — по кнопке у строки")}</span></section>
-    <section class="card tw show${tcolCls("heavy")}">${tcolBtn("heavy")}<div class="tbar"><span class="fl">${I.search(15)}<input id="hv-flt" placeholder="${t("Фильтр: объект, база, текст")}"></span><span class="lbl" id="hv-cnt"></span></div>
-      <div class="acts">${colsBtn("heavy", "S.live.heavy")}</div>
-      <div class="tscroll" id="hv-body"><div class="empty">${t("Загрузка…")}</div></div></section>`;
-  S.live.heavy = {sort: null, filter: "", render: heavyRender};
-  $("#hv-flt").addEventListener("input", e => { S.live.heavy.filter = e.target.value.trim().toLowerCase(); heavyRender(); });
-  heavyLoad();
+function dbms() { return S.st.dbms || {heavy_orders: HEAVY_METRICS.map(x => x[0]), heavy_hours: true, absent: {}, load_by_db: []}; }
+const absentCols = (kind, cols) => cols.filter(c => !(dbms().absent[kind] || []).includes(c[0]));   // колонки без данных у СУБД
+const isPg = () => dbms().name === "PostgreSQL";
+// [название, пояснение MS SQL Server, пояснение PostgreSQL]
+const SECS = {
+  heavy: ["Тяжелые запросы", "статистика кэша планов sys.dm_exec_query_stats", "статистика запросов pg_stat_statements"],
+  waits: ["Ожидания", "ожидания всего сервера sys.dm_os_wait_stats, без фоновых", "выборка активных сессий pg_stat_activity раз в 100 мс"],
+  io: ["Ввод-вывод", "чтения и записи файлов баз sys.dm_io_virtual_file_stats", "чтения и записи по процессам pg_stat_io, с PostgreSQL 16"],
+  space: ["Место", "файлы базы и свободное место на дисках sys.database_files, sys.dm_os_volume_stats", "размер баз и WAL pg_database_size, pg_replication_slots"],
+  tables: ["Таблицы", "размеры и обращения sys.allocation_units, sys.dm_db_index_usage_stats", "размеры (оценка по pg_class) и обращения pg_stat_user_tables"],
+  functions: ["Функции и процедуры", "статистика кэша планов sys.dm_exec_procedure_stats, sys.dm_exec_function_stats", "статистика функций pg_stat_user_functions, только при track_functions"],
+  temp: ["Временные данные", "занятое сессиями в tempdb sys.dm_db_session_space_usage, sys.dm_db_task_space_usage", "временные файлы сессий pg_ls_tmpdir, pg_stat_database"],
+};
+// все свернуты, пока пользователь не открыл раздел; открыт не больше одного (tcolToggle)
+const secOpen = k => !tcolOn("sec-" + k, true);
+function secCard(k, inner) {
+  const [title, ms, pg] = SECS[k];
+  return `<section class="card tw show sec${tcolCls("sec-" + k, true)}" id="sec-${k}">${tcolBtn("sec-" + k)}<div class="tbar"><h2>${t(title)}</h2><span class="secn">(${h(t(isPg() ? pg : ms))})</span><span class="lbl" id="${k}-cnt"></span></div>${inner}</section>`;
 }
-async function heavyLoad() {
-  const o = S.heavy, L = S.live.heavy;
-  o.order = $("#hv-order").value; o.hours = +$("#hv-hours").value; o.top = +$("#hv-top").value;
-  $("#hv-body").innerHTML = `<div class="empty"><span class="pulse"></span> ${t("Запрос к статистике сервера…")}</div>`;
-  try { L.rows = await api("heavy_queries", o.order, o.hours, o.top); L.err = null; } catch (e) { L.err = String(e.message || e); }
-  if (S.live.heavy !== L) return;
-  L.sort = null;
-  heavyRender();
+function secHooks(load) {       // разворачивание раздела без данных - запрос
+  for (const k of Object.keys(S.live.secs)) { const c = $("#sec-" + k); if (c) c._render = () => { if (!S.live.secs[k].data) load([k]); }; }
+}
+const secBody = k => $("#" + k + "-body");
+const secWait = (k, text) => { const b = secBody(k); if (b) b.innerHTML = `<div class="empty"><span class="pulse"></span> ${text}</div>`; };
+function secErr(k, err) {
+  secBody(k).innerHTML = `<div class="empty">${t("Не удалось получить данные: {err}", {err: h(err)})}</div>`;
+  $("#" + k + "-cnt").textContent = "";
+}
+function secOpenScroll(k) {      // развернуть раздел (если свернут) и прокрутить к нему
+  const c = $("#sec-" + k);
+  if (!c) return;
+  if (c.classList.contains("tcl")) c.querySelector(".tcol").click();
+  c.scrollIntoView({behavior: "smooth", block: "start"});
+}
+const mbCell = (v, cls = "", pre = "") => `<td class="n${cls}">${pre}${v == null ? "" : nf(v)}${v >= 1024 ? `<span class="sv">${nf(Math.round(v / 102.4) / 10)} ${t("ГБ")}</span>` : ""}</td>`;
+const numCell = (v, cls = "") => `<td class="n${cls}">${v == null ? "" : nf(v)}</td>`;
+// значок-подсказка: на что обратить внимание (только то, что верно почти для любого сервера)
+const warnIco = text => `<span class="warn" title="${h(text)}">${I.warn(14)}</span>`;
+const WARN = {
+  get unusedIdx() { return t("Индекс не читался с перезапуска сервера (или сброса статистики), но обновляется при каждом изменении таблицы: возможно, он только нагружает сервер. Перед удалением убедитесь, что сервер работает давно и индекс не нужен редким отчетам."); },
+  get heap() { return t("Большая куча — таблица без кластерного индекса: строка, которая выросла при изменении, переносится, и чтение идет через ссылку на новое место; место после удаления строк часто не освобождается. Обычно таблице нужен кластерный индекс."); },
+  get scan() { return t("Таблица больше 100 МБ чаще читается полным просмотром, чем поиском по индексу: возможно, частым запросам не хватает индекса (тяжелые запросы с таблицей — кнопка в начале строки)."); },
+  get dead() { return t("Мертвых строк больше 20%: autovacuum не успевает или его держит долгая транзакция; таблица и индексы занимают лишнее место и читаются медленнее."); },
+  get emptyCol() { return t("По статистике ANALYZE столбец пуст (NULL) во всех строках."); },
+  get growPct() { return t("Прирост в процентах: у большого файла каждый прирост большой и долгий, а размер следующего не угадать. Обычно задают прирост в МБ."); },
+  get growLog() { return t("Маленький прирост журнала у большого файла: каждый прирост добавляет виртуальные журналы (VLF), и их тысячи — дольше восстановление и запуск базы."); },
+  get growData() { return t("Маленький прирост у большого файла: файл растет часто, и каждый прирост — ожидание для запросов, которые пишут."); },
+  get low() { return t("Можно занять еще меньше 1 ГБ или меньше 10% размера: база скоро упрется в предел файла или в диск."); },
+  get slot() { return t("Неактивный слот репликации: сервер хранит WAL, пока слот его не прочитает, и папка WAL растет, пока не кончится место."); },
+  get slowRead() { return t("Чтение дольше 20 мс на операцию: диск не успевает (или его делят с другими)."); },
+  get slowData() { return t("Запись файла данных дольше 20 мс на операцию: диск не успевает."); },
+  get slowLog() { return t("Запись журнала дольше 5 мс на операцию: каждая фиксация транзакции ждет диск."); },
+  get lowHit() { return t("Меньше 90% страниц найдено в кэше: данные часто читаются с диска — мал shared_buffers или много полных просмотров больших таблиц."); },
+  get selfWrite() { return t("Клиентские процессы сами пишут страницы на диск: фоновая запись (bgwriter, checkpointer) не успевает, и запросы ждут записи."); },
+};
+// число с подсказкой: warn - текст (тогда красным со значком) или false
+const warnNum = (v, warn, cls = "") => `<td class="n${warn ? " hotv b" : cls}">${warn ? warnIco(warn) : ""}${v == null ? "" : nf(v)}</td>`;
+const GROW_SMALL_MB = 64, ROW_BYTES_MIN = 1000, SCAN_MIN = 5;     // маленький прирост у файла от 1 ГБ; байт на строку - от 1000 строк
+const rbCell = r => `<td class="n"${r.rb == null ? "" : ` title="${t("Занятые страницы на строку: данные {d} байт, индексы {i} байт. Оценка роста: столько займет каждая новая строка с похожими данными", {d: nf(r.data_row_bytes), i: nf(r.row_bytes - r.data_row_bytes)}) + (isPg() ? " " + t("(у PostgreSQL в индексы входит и TOAST)") : "")}"`}>${r.rb == null ? "" : nf(r.rb)}</td>`;
+const tsCell = v => `<td class="mono pale">${h((v || "").slice(0, 16))}</td>`;
+const pct = x => nf(Math.round(x * 1000) / 10) + "%";
+const fileType = x => ({ROWS: t("данные"), LOG: t("лог")})[x] || x || "";
+const bareName = x => String(x || "").replace(/\(.*$/, "").split(".").pop().replace(/"/g, "");   // dbo.T, s.f(integer) -> T, f
+// колонки, пустые во всех строках, не показываются (счетчика нет у СУБД или нет данных); c[5] - показывать всегда
+const filled = (cols, rows) => cols.filter(c => !c[0] || c[5] || rows.some(r => r[c[0]] != null && r[c[0]] !== ""));
+function hlRow(body) {       // подсвеченная строка (переход с другого экрана) - в видимую часть
+  const tr = body.querySelector("tr.hl");
+  if (tr) setTimeout(() => tr.scrollIntoView({block: "center"}), 60);
+}
+// базы для выбора: список с сервера; выбранная остается, даже если ее нет в списке. Возвращает имя выбранной
+// так, как его пишет сервер (регистр)
+async function dbOptions(sel, cur, all) {
+  const fill = list => {
+    const names = [...new Set([...(cur ? [cur] : []), ...list])];
+    sel.innerHTML = (all ? `<option value=""${cur ? "" : " selected"}>${t("Все")}</option>` : "") +
+      names.map(x => `<option value="${h(x)}"${x === cur ? " selected" : ""}>${h(x)}</option>`).join("");
+    if (sel.classList.contains("flt")) fltMark(sel);
+  };
+  fill([]);
+  try {
+    const list = await api("databases");
+    cur = list.find(x => cur && x.toLowerCase() === cur.toLowerCase()) || cur;
+    fill(list);
+  } catch (e) { /* список не получен - только выбранная */ }
+  return cur;
+}
+const connDb = () => (S.st.connection || {}).database || "";
+const selHtml = (id, opts, val, on, cls = "") => `<select class="inp${cls}" id="${id}"${on ? ` onchange="${on}"` : ""}>${opts.map(([k, lbl]) => `<option value="${k}"${String(k) === String(val) ? " selected" : ""}>${t(lbl)}</option>`).join("")}</select>`;
+const flHtml = (id, ph) => `<span class="fl">${I.search(15)}<input id="${id}" placeholder="${t(ph)}">${FLX}</span>`;
+const ibHtml = (title, on, icon, extra = "") => `<span class="ib${extra}" title="${h(title)}" onclick="${on}">${icon}</span>`;
+const goJs = v => h(`go(${JSON.stringify(v)})`);
+
+// ---------------------------------------------------------------- нагрузка сервера (§5.21)
+// Тяжелые запросы, ожидания и ввод-вывод. Замер за интервал - один вызов server_load: первые снимки, замер
+// ожиданий (он же пауза), вторые снимки - все открытые разделы за одни и те же секунды. Накопленное - разделы
+// по отдельности, каждый показывается, как только готов (ожидания PostgreSQL - всегда замер, 10 с).
+function viewLoad(m, v) {
+  const d = dbms(), metrics = HEAVY_METRICS.filter(x => d.heavy_orders.includes(x[0]));
+  const o = S.load ||= {db: null, interval: 0, order: null, hours: 0, top: 100};
+  if (o.db === null) o.db = connDb();
+  if (v.db !== undefined) o.db = v.db;
+  if (!d.heavy_orders.includes(o.order)) o.order = d.heavy_orders[0];      // первый показатель СУБД
+  if (!d.heavy_hours) o.hours = 0;
+  m.innerHTML = `
+    <header class="head"><div style="display:flex;flex-direction:column;gap:8px">${backLine()}<h1>${t("Нагрузка сервера")}</h1>
+      <span class="lbl">${t("что нагружает сервер: запросы, ожидания, диски · запросы к статистике сервера — при открытии раздела и по кнопке «Обновить»")}</span></div></header>
+    <section class="card" style="padding:14px 20px;display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px">
+      <label class="field"><span class="lbl">${t("База данных")}</span><select class="inp flt" id="ld-db" onchange="S.load.db=this.value;loadRefresh()"></select></label>
+      <label class="field" title="${t("Два снимка статистики с паузой и их разница: что нагружало сервер именно за эти секунды")}"><span class="lbl">${t("Период")}</span>${selHtml("ld-int", [[0, "накоплено с перезапуска или сброса статистики"], [10, "замер за 10 с"], [30, "замер за 30 с"], [60, "замер за 60 с"]], o.interval, "loadRefresh()")}</label>
+      <a class="btn pri" onclick="loadRefresh()">${I.refresh(16)}${t("Обновить")}</a>
+      <span class="pale" style="font-size:12px;margin-left:auto;max-width:380px">${t("Замер за интервал: все открытые разделы — за одни и те же секунды.")}${d.heavy_interval ? "" : " " + t("Тяжелые запросы MS SQL Server — по своему отбору «Выполнялись».")}</span></section>
+    ${secCard("heavy", `<div class="flts">
+        <label class="field"><span class="lbl">${t("Сортировать по")}</span>${selHtml("hv-order", metrics, o.order, "loadRefresh(['heavy'])")}</label>
+        ${d.heavy_hours ? `<label class="field"><span class="lbl">${t("Выполнялись")}</span>${selHtml("hv-hours", [[0, "за все время в кэше"], [1, "за последний час"], [24, "за последние сутки"], [168, "за последнюю неделю"]], o.hours, "loadRefresh(['heavy'])", " flt")}</label>` : ""}
+        <label class="field" style="flex:0 1 110px;min-width:90px"><span class="lbl">${t("Сколько")}</span>${selHtml("hv-top", [[50, "50"], [100, "100"], [200, "200"]], o.top, "loadRefresh(['heavy'])")}</label>
+        ${flHtml("hv-flt", "Фильтр: объект, база, текст")}</div>
+      <div class="acts">${colsBtn("heavy", "S.live.heavy")}</div><div class="tscroll" id="heavy-body"></div>`)}
+    ${secCard("waits", `<div id="waits-bar"></div><div class="acts">${colsBtn("waits", "S.live.waits")}</div><div class="tscroll" id="waits-body"></div>`)}
+    ${secCard("io", `<div class="flts">${flHtml("io-flt", isPg() ? "Фильтр: процесс, объект, контекст" : "Фильтр: база, файл, путь")}
+        <span class="popt" style="align-self:center" onclick="S.live.io.slow=!S.live.io.slow;this.firstChild.classList.toggle('on');ioRender()"><span class="sw"></span>${t(isPg() ? "Только проблемные" : "Только медленные")}</span></div>
+      <div class="acts">${colsBtn("io", "S.live.io")}</div><div class="tscroll" id="io-body"></div>`)}`;
+  S.live.heavy = {sort: null, filter: (v.filter || "").toLowerCase(), render: heavyRender};
+  S.live.waits = {sort: null, render: waitsRender};
+  S.live.io = {sort: null, filter: "", slow: false, render: ioRender};
+  S.live.secs = {heavy: S.live.heavy, waits: S.live.waits, io: S.live.io};
+  $("#hv-flt").value = v.filter || "";
+  $("#hv-flt").addEventListener("input", e => { S.live.heavy.filter = e.target.value.trim().toLowerCase(); heavyRender(); });
+  $("#io-flt").addEventListener("input", e => { S.live.io.filter = e.target.value.trim().toLowerCase(); ioRender(); });
+  dbOptions($("#ld-db"), o.db, true).then(x => { if (x && o.db && x.toLowerCase() === o.db.toLowerCase()) o.db = x; });
+  fltMarks(m);
+  secHooks(loadRefresh);
+  loadRefresh();
+  if (v.filter) secOpenScroll("heavy");
+}
+async function loadRefresh(only) {
+  const o = S.load, secs = S.live.secs, d = dbms();
+  if (!secs || !$("#ld-int")) return;
+  o.interval = +$("#ld-int").value; o.order = $("#hv-order").value; o.top = +$("#hv-top").value;
+  o.hours = $("#hv-hours") ? +$("#hv-hours").value : 0;
+  const n = o.interval;
+  if (n && d.heavy_interval && o.order === "max_time") { o.order = "time"; $("#hv-order").value = "time"; toast(t("Наибольшее время за интервал не считается — сортировка по времени")); }
+  const parts = (only || ["heavy", "waits", "io"]).filter(secOpen);
+  if (!parts.length) return;
+  for (const k of parts) {
+    const measure = k === "waits" ? n || !d.waits_total : k === "heavy" ? n && d.heavy_interval : n;
+    secWait(k, measure ? t("Замер за {n} с…", {n: n || 10}) : t("Запрос к статистике сервера…"));
+  }
+  const tokens = Object.fromEntries(parts.map(k => [k, secs[k].token = {}]));     // ответ после нового «Обновить» не нужен
+  await Promise.all((n ? [parts] : parts.map(k => [k])).map(async g => {
+    let res;
+    try { res = await api("server_load", g, o.db, n, o.order, o.hours, o.top); } catch (e) { res = Object.fromEntries(g.map(k => [k, {err: String(e.message || e)}])); }
+    if (S.live.secs !== secs) return;
+    for (const k of g) if (secs[k].token === tokens[k]) { secs[k].data = res[k] || {err: "—"}; secs[k].db = o.db; secs[k].sort = null; secs[k].render(); }
+  }));
 }
 function heavyRender() {
-  const L = S.live.heavy, body = $("#hv-body");
-  if (!body) return;
-  if (L.err) { body.innerHTML = `<div class="empty">${t("Не удалось получить статистику: {err}", {err: h(L.err)})}</div>`; return; }
+  const L = S.live.heavy, body = secBody("heavy"), D = L.data;
+  if (!body || !D) return;
+  if (D.err) return secErr("heavy", D.err);
   const avg = (r, k) => r.execs ? Math.round(r[k] / r.execs) : null;
-  const rows = (L.rows || []).map((r, i) => Object.assign(r, {i, cpu_avg: avg(r, "cpu"), time_avg: avg(r, "time"), reads_avg: avg(r, "reads"), rows_avg: avg(r, "rows")}));
+  const rows = L.rows = D.rows.map((r, i) => Object.assign(r, {i, cpu_avg: avg(r, "cpu"), time_avg: avg(r, "time"), reads_avg: avg(r, "reads"), rows_avg: avg(r, "rows")}));
   const shown = rows.filter(r => srvMatch(r, L.filter, ["db", "object", "statement"]));
-  $("#hv-cnt").textContent = shown.length !== rows.length ? t("{n} из {of}", {n: shown.length, of: rows.length}) : String(shown.length);
-  const cols = [
-    [null, "", null, r => `<td class="acts2"><span class="ib" title="${t("Текст запроса")}" onclick="heavyText(${r.i})">${I.note(14)}</span><span class="ib" title="${t("План")}" onclick="heavyPlan(${r.i})">${I.plan(14)}</span></td>`],
+  $("#heavy-cnt").textContent = (shown.length !== rows.length ? t("{n} из {of}", {n: shown.length, of: rows.length}) : String(shown.length)) +
+    (D.seconds ? " · " + t("за последние {n} с", {n: D.seconds}) : "") +
+    (L.db ? " · " + (isPg() ? t("база {db}", {db: L.db}) : t("база {db}: среди самых тяжелых запросов всего сервера", {db: L.db})) : "");
+  const cols = absentCols("heavy", [
+    [null, "", null, r => `<td class="acts2"><span class="ib" title="${t("Показать текст запроса")}" onclick="heavyText(${r.i})">${I.note(14)}</span>${r.plan_handle ? `<span class="ib" title="${t("Открыть план запроса")}" onclick="heavyPlan(${r.i})">${I.plan(14)}</span>` : ""}</td>`],
     ["object", "Оператор", "", r => opCell(r.object, r.object ? r.line : 0, r.statement)],
     ["db", "База", "", r => `<td>${h(r.db || "")}</td>`],
     ["execs", "Выпол-<br>нений", "n", r => `<td class="n">${nf(r.execs)}</td>`],
@@ -2379,111 +2720,473 @@ function heavyRender() {
     ["rows_avg", "Строк на<br>выполнение", "n", r => `<td class="n">${nf(r.rows_avg)}</td>`],
     ["last", "Последнее<br>выполнение", "", r => `<td class="mono">${h((r.last || "").slice(5, 16))}</td>`],
     ["created", "В кэше с", "", r => `<td class="mono pale">${h((r.created || "").slice(5, 16))}</td>`],
-  ];
-  L.hot = HEAVY_HOT[S.heavy.order];
+  ]);
+  L.hot = HEAVY_HOT[S.load.order];
   body.innerHTML = shown.length ? srvTable("heavy", cols, shown) : `<div class="empty">${rows.length ? t("Нет строк по фильтру") : t("Статистики нет")}</div>`;
   hbar(body);
 }
-function heavyText(i) { const r = S.live.heavy.rows[i]; textDialog(`${r.object || t("Запрос (ad hoc)")}${r.object && r.line ? ":" + r.line : ""}`, r.statement, `heavy_${i + 1}`); }
+function heavyText(i) { const r = S.live.heavy.rows[i]; textDialog(`${r.object || t("Запрос (ad hoc)")}${r.object && r.line ? ":" + r.line : ""}`, r.text || r.statement, `heavy_${i + 1}`, null, r.db); }
 function heavyPlan(i) { const r = S.live.heavy.rows[i]; api("open_plan", r.plan_handle, r.start, r.end, `heavy_${i + 1}`).catch(fail); }
+function heavyBy(order) {        // из ожиданий диска: тяжелые запросы по чтениям
+  $("#hv-order").value = order;
+  secOpenScroll("heavy");
+  loadRefresh(["heavy"]);
+}
 
-// ---------------------------------------------------------------- плашки «Новое наблюдение» (§5.9)
-// Сверху экрана - выбранная база (по умолчанию - база подключения) и плашки: две свои (активные сессии,
-// свободное место) и пользовательские ("GUI".tiles). Все запросы - в выбранной базе; база не выбрана -
-// ничего не выполняется, значения стираются. «Активные сессии» обновляются вместе с таблицей сессий,
-// остальные - при открытии экрана и по всплывающей кнопке «обновить».
-function tileList() {
-  return [{k: "sessions", name: t("Активные сессии")}, {k: "space", name: t("Свободное место")}]
-    .concat((S.st.tiles || []).map(x => ({k: x.id, name: x.name, user: true})));
+// группы ожиданий для полосы долей (waitCat; §5.3)
+// [группа, подпись, первая строка подсказки легенды]
+const WAIT_GROUPS = [["lock", "Блокировки", "Ожидания блокировок: другая сессия держит строку или таблицу"],
+  ["disk", "Диск", "Ожидания дисковой системы: чтение страниц, запись журнала"],
+  ["cpu", "CPU", "Процессор: работа запроса и очередь к процессору"],
+  ["net", "Клиент", "Ожидание клиента: программа забирает результат"],
+  ["mem", "Память", "Ожидание выделения памяти запросу"],
+  ["par", "Параллелизм", "Потоки параллельного запроса ждут друг друга"],
+  ["page", "Страницы", "Ожидание доступа к страницам в памяти: одну страницу меняют одновременно"],
+  ["oth", "Прочее", "Прочие ожидания"]];
+const WAIT_TIP_MAX = 15;          // строк ожиданий в подсказке группы
+function waitTip(rows, k, tip, total) {     // подсказка группы: что в нее входит, по убыванию времени
+  const list = rows.filter(r => r.cat === k).sort((a, b) => b.time - a.time);
+  return [t(tip), ...list.slice(0, WAIT_TIP_MAX).map(r => `${r.wait} — ${pct(r.time / total)}`),
+    ...(list.length > WAIT_TIP_MAX ? [t("и еще {n}", {n: list.length - WAIT_TIP_MAX})] : [])].join("\n");
 }
-const TILES_ON = false;      // плашки временно скрыты (пользователь вернет позже): код и API остаются
-function tilesDb(db) {       // база плашек - фильтр «База данных» таблицы сессий («Все» - не выбрана)
-  if (!TILES_ON || S.live.tdb === db) return;
-  S.live.tdb = db;
-  S.live.tiles = {};
-  renderTiles();
-  tilesLoad(true);
+function waitsRender() {
+  const L = S.live.waits, body = secBody("waits"), D = L.data;
+  if (!body || !D) return;
+  if (D.err) { $("#waits-bar").innerHTML = ""; return secErr("waits", D.err); }
+  const pg = isPg(), all = L.db && !dbms().load_by_db.includes("waits");
+  const rows = L.rows = D.rows.map((r, i) => Object.assign(r, {i, cat: waitCat(r.wait)}));
+  $("#waits-cnt").textContent = (pg ? t("за {n} с: выборок {k}, в среднем активных сессий {a}; время — оценка по выборкам", {n: D.seconds, k: nf(D.samples), a: nf(D.active)})
+    : D.seconds ? t("за {n} с, всего {ms} мс", {n: D.seconds, ms: nf(D.total)}) : t("накоплено с перезапуска сервера, всего {ms} мс", {ms: nf(D.total)})) +
+    (all ? " · " + t("весь сервер: отбора по базе нет") : L.db ? " · " + t("база {db}", {db: L.db}) : "");
+  const sums = {}, total = rows.reduce((a, r) => a + r.time, 0);
+  for (const r of rows) sums[r.cat] = (sums[r.cat] || 0) + r.time;
+  const groups = WAIT_GROUPS.filter(([k]) => sums[k]);
+  const tip = (k, n, d) => h(t(n) + " " + pct(sums[k] / total) + "\n" + waitTip(rows, k, d, total));
+  $("#waits-bar").innerHTML = total ? `<div class="wbar">${groups.map(([k, n, d]) => `<span class="g-${k}" style="flex:${sums[k]}" title="${tip(k, n, d)}"></span>`).join("")}</div>
+    <div class="wleg">${groups.map(([k, n, d]) => `<span title="${h(waitTip(rows, k, d, total))}"><i class="g-${k}"></i>${t(n)} <b>${pct(sums[k] / total)}</b></span>`).join("")}</div>` : "";
+  const cols = filled([
+    [null, "", null, r => `<td class="acts2">${waitActs(r)}</td>`],
+    ["wait", "Ожидание", "", r => `<td>${waitHtml(r.wait)}</td>`],
+    ["cat", "Группа", "", r => `<td>${t((WAIT_GROUPS.find(g => g[0] === r.cat) || [0, "Прочее"])[1])}</td>`],
+    ["time", pg ? "Время мс<br>(оценка)" : "Время<br>мс", "n", r => msCell(r.time)],
+    ["share", "Доля<br>%", "n", r => `<td class="n"><span class="shr"><i style="width:${Math.min(100, r.share)}%"></i></span>${nf(r.share)}</td>`],
+    ["tasks", "Ожида-<br>ний", "n", r => numCell(r.tasks)],
+    ["signal", "Из них сигнал мс<br>(очередь к CPU)", "n", r => msCell(r.signal)],
+    ["sessions", "Сессий", "n", r => numCell(r.sessions)],
+    ["db", "База", "", r => `<td>${h(r.db || "")}</td>`],
+    ["statement", "Самый частый запрос", "", r => `<td class="mono clip wide" title="${h(r.statement || "")}">${h((r.statement || "").slice(0, 200))}</td>`],
+  ], rows);
+  L.hot = "time";
+  body.innerHTML = rows.length ? srvTable("waits", cols, rows) : `<div class="empty">${t("Ожиданий не было")}</div>`;
+  hbar(body);
 }
-function renderTiles() {
-  const box = $("#tl-box");
-  if (!box) return;
-  box.innerHTML = tileList().map(x => `<div class="card kpi tile" id="tile-${h(x.k)}"><span class="lbl" title="${h(x.name)}">${h(x.name)}</span><div class="tvals"></div>
-      ${x.user ? `<span class="ib tedit" title="${t("Изменить плашку")}" onclick="tileDialog(${h(JSON.stringify(x.k))})">${I.pen(14)}</span>` : ""}</div>`).join("") +
-    `<div class="tacts"><span class="ib" title="${t("Добавить плашку")}" onclick="tileDialog(null)">${I.plus(16)}</span><span class="ib" title="${t("Обновить плашки")}" onclick="tilesLoad(false)">${I.refresh(15)}</span></div>`;
-  for (const x of tileList()) fillTile(x.k);
+function waitActs(r) {
+  let s = "";
+  if (r.cat === "lock") s += ibHtml(t("К экрану «Текущие запросы», сначала блокирующие"), goJs({k: "current", sort: "blocks"}), I.pulse(14));
+  if (r.cat === "disk") s += ibHtml(t("К таблице «Ввод-вывод»"), "secOpenScroll('io')", I.db(14)) + ibHtml(t("К таблице «Тяжелые запросы», сортировка «Чтений всего»"), "heavyBy('reads')", I.flame(14));
+  if (isPg() && r.wait !== "CPU") s += ibHtml(t("К экрану «Текущие запросы», фильтр по этому ожиданию"), goJs({k: "current", filter: r.wait}), I.eye(14));
+  return s;
 }
-function tilesLoad(withSessions) {          // withSessions - и «Активные сессии» (при открытии и смене базы)
-  for (const x of tileList()) if (withSessions || x.k !== "sessions") tileLoad(x.k);
+function ioRender() {
+  const L = S.live.io, body = secBody("io"), D = L.data;
+  if (!body || !D) return;
+  if (D.err) return secErr("io", D.err);
+  const pg = isPg(), r10 = x => Math.round(x * 10) / 10;
+  const rows = L.rows = D.rows.map((r, i) => {
+    Object.assign(r, {i});
+    if (pg) {
+      const all = (r.reads || 0) + (r.hits || 0);
+      r.hit_pct = all ? r10(100 * (r.hits || 0) / all) : null;
+      // только обычная работа с общим кэшем: bulkread, bulkwrite, vacuum идут через свое маленькое кольцо буферов,
+      // временные таблицы пишет сам процесс - это не проблема
+      const usual = r.object === "relation" && r.context === "normal";
+      r.low_hit = usual && all > 1000 && r.hit_pct < 90;
+      r.self_write = usual && r.backend === "client backend" && r.writes > 0;     // обычно грязные страницы пишут фоновые процессы
+      r.bad = r.low_hit || r.self_write;
+    } else {
+      r.read_avg = r.reads ? r10(r.read_ms / r.reads) : null;
+      r.write_avg = r.writes ? r10(r.write_ms / r.writes) : null;
+      r.slow_read = r.type !== "LOG" && r.read_avg > 20;
+      r.slow_write = r.type === "LOG" ? r.write_avg > 5 : r.write_avg > 20;
+      r.bad = r.slow_read || r.slow_write;
+    }
+    return r;
+  });
+  const shown = rows.filter(r => (!L.slow || r.bad) && srvMatch(r, L.filter, pg ? ["backend", "object", "context"] : ["db", "file", "path"]));
+  $("#io-cnt").textContent = (shown.length !== rows.length ? t("{n} из {of}", {n: shown.length, of: rows.length}) : String(shown.length)) + " · " +
+    (D.seconds ? t("за {n} с", {n: D.seconds}) : pg ? t("с последнего сброса статистики") : t("с перезапуска сервера")) +
+    (L.db ? " · " + (pg ? t("весь сервер: в pg_stat_io нет деления по базам") : t("база {db}", {db: L.db})) : "") + (D.note ? " · " + D.note : "");
+  const cols = filled(pg ? [
+    ["backend", "Процесс", "", r => `<td>${h(r.backend)}</td>`],
+    ["object", "Объект", "", r => `<td>${h(r.object)}</td>`],
+    ["context", "Контекст", "", r => `<td>${h(r.context)}</td>`],
+    ["reads", "Чтений", "n", r => numCell(r.reads)],
+    ["hits", "Из кэша", "n", r => numCell(r.hits)],
+    ["hit_pct", "Доля<br>кэша %", "n", r => warnNum(r.hit_pct, r.low_hit && WARN.lowHit)],
+    ["read_ms", "Чтение<br>мс", "n", r => msCell(r.read_ms)],
+    ["writes", "Записей", "n", r => warnNum(r.writes, r.self_write && WARN.selfWrite)],
+    ["write_ms", "Запись<br>мс", "n", r => msCell(r.write_ms)],
+    ["extends", "Расши-<br>рений", "n", r => numCell(r.extends)],
+    ["evictions", "Вытес-<br>нений", "n", r => numCell(r.evictions)],
+    ["fsyncs", "fsync", "n", r => numCell(r.fsyncs)],
+  ] : [
+    [null, "", null, r => `<td class="acts2">${ibHtml(t("К экрану «База данных», таблица «Место»: файлы базы {db}", {db: r.db}), goJs({k: "dbinfo", db: r.db, hl: r.file}), I.db(14))}</td>`],
+    ["db", "База", "", r => `<td>${h(r.db)}</td>`],
+    ["file", "Файл", "", r => `<td class="b">${h(r.file)}</td>`],
+    ["type", "Тип", "", r => `<td>${h(fileType(r.type))}</td>`],
+    ["read_avg", "Чтение<br>мс на операцию", "n", r => warnNum(r.read_avg, r.slow_read && WARN.slowRead, " b")],
+    ["write_avg", "Запись<br>мс на операцию", "n", r => warnNum(r.write_avg, r.slow_write && (r.type === "LOG" ? WARN.slowLog : WARN.slowData), " b")],
+    ["reads", "Чтений", "n", r => numCell(r.reads)],
+    ["read_mb", "Прочитано<br>МБ", "n", r => mbCell(r.read_mb)],
+    ["read_ms", "Ожидание<br>чтения мс", "n", r => msCell(r.read_ms)],
+    ["writes", "Записей", "n", r => numCell(r.writes)],
+    ["write_mb", "Записано<br>МБ", "n", r => mbCell(r.write_mb)],
+    ["write_ms", "Ожидание<br>записи мс", "n", r => msCell(r.write_ms)],
+    ["stall", "Ожидание<br>всего мс", "n", r => msCell(r.stall)],
+    ["path", "Путь", "", r => `<td class="mono pale clip" title="${h(r.path)}">${h(r.path)}</td>`],
+  ], rows);
+  L.hot = pg ? null : "read_avg";
+  body.innerHTML = shown.length ? srvTable("io", cols, shown) : `<div class="empty">${rows.length ? t("Нет строк по фильтру") : t("Чтений и записей не было")}</div>`;
+  hbar(body);
 }
-async function tileLoad(k) {
-  const db = S.live.tdb, tiles = S.live.tiles ||= {};
-  if (!db) { delete tiles[k]; fillTile(k); return; }
-  tiles[k] = {loading: true};
-  fillTile(k);
-  const kind = k === "sessions" || k === "space" ? k : "user";
-  let r;
-  try { r = {data: await api("tile", db, kind, kind === "user" ? k : null)}; } catch (e) { r = {err: String(e.message || e)}; }
-  if (S.live.tiles !== tiles || S.live.tdb !== db) return;     // за время запроса сменили базу или экран
-  tiles[k] = r;
-  fillTile(k);
+
+// ---------------------------------------------------------------- база данных (§5.28)
+// Место, таблицы (строка раскрывается - индексы), функции и процедуры выбранной базы и временные данные
+// сервера. Только каталог и статистика сервера: данные таблиц не читаются.
+function viewDbInfo(m, v) {
+  const o = S.dbi ||= {db: null};
+  if (v.db) o.db = v.db;
+  if (!o.db) o.db = connDb();
+  const pg = isPg();
+  m.innerHTML = `
+    <header class="head"><div style="display:flex;flex-direction:column;gap:8px">${backLine()}<h1>${t("База данных")}</h1>
+      <span class="lbl">${t("место, таблицы, функции и временные данные · только каталог и статистика сервера, данные таблиц не читаются")}</span></div></header>
+    <section class="card" style="padding:14px 20px;display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px">
+      <label class="field"><span class="lbl">${t("База данных")}</span><select class="inp" id="dbi-db" onchange="S.dbi.db=this.value;dbRefresh(['space','tables','functions'])"></select></label>
+      <a class="btn pri" onclick="dbRefresh()">${I.refresh(16)}${t("Обновить")}</a>
+      <span class="pale" style="font-size:12px;margin-left:auto;max-width:380px">${t("Запросы — при открытии раздела и по кнопке «Обновить». Временные данные — всего сервера.")}</span></section>
+    ${secCard("space", `<div class="secsum" id="space-sum"></div><div class="acts">${colsBtn("space", "S.live.space")}</div><div class="tscroll" id="space-body"></div>`)}
+    ${secCard("tables", `<div class="flts">${flHtml("tb-flt", pg ? "Фильтр: таблица, схема, табличное пространство" : "Фильтр: таблица, схема, файловая группа")}
+        <label class="field" style="flex:0 1 150px"><span class="lbl">${t("Размер")}</span>${selHtml("tb-size", [[0, "все"], [10, "от 10 МБ"], [100, "от 100 МБ"], [1024, "от 1 ГБ"]], 0, "S.live.tables.size=+this.value;tablesRender()", " flt")}</label>
+        <span class="popt" style="align-self:center" title="${t("Ни чтений, ни изменений с перезапуска сервера (или сброса статистики)")}" onclick="S.live.tables.unused=!S.live.tables.unused;this.firstChild.classList.toggle('on');tablesRender()"><span class="sw"></span>${t("Не использовались")}</span></div>
+      <div class="acts">${colsBtn("tables", "S.live.tables")}</div><div class="tscroll" id="tables-body"></div>`)}
+    ${secCard("functions", `<div class="flts">${flHtml("fn-flt", "Фильтр: объект, схема")}</div><div class="acts">${colsBtn("functions", "S.live.functions")}</div><div class="tscroll" id="functions-body"></div>`)}
+    ${secCard("temp", `<div class="secsum" id="temp-sum"></div><div class="acts">${colsBtn("temp", "S.live.temp")}</div><div class="tscroll" id="temp-body"></div><div id="temp-more"></div>`)}`;
+  S.live.space = {sort: null, hl: v.hl, render: spaceRender};
+  S.live.tables = {sort: {k: "total_mb", dir: -1}, filter: "", size: 0, unused: false, open: null, sub: {}, render: tablesRender};
+  S.live.functions = {sort: {k: "time", dir: -1}, filter: "", render: funcsRender};
+  S.live.temp = {sort: null, hl: v.spid, render: tempRender};
+  S.live.secs = {space: S.live.space, tables: S.live.tables, functions: S.live.functions, temp: S.live.temp};
+  $("#tb-flt").addEventListener("input", e => { S.live.tables.filter = e.target.value.trim().toLowerCase(); tablesRender(); });
+  $("#fn-flt").addEventListener("input", e => { S.live.functions.filter = e.target.value.trim().toLowerCase(); funcsRender(); });
+  dbOptions($("#dbi-db"), o.db, false).then(x => { if (x && o.db && x.toLowerCase() === o.db.toLowerCase()) o.db = x; });
+  secHooks(dbRefresh);
+  dbRefresh();              // свернутый раздел, к которому переходим, запросится при разворачивании
+  if (v.hl) secOpenScroll("space");
+  if (v.spid) secOpenScroll("temp");
 }
-function fillTile(k) {
-  const el = document.querySelector(`#tile-${CSS.escape(k)} .tvals`);
-  if (!el) return;
-  const r = (S.live.tiles || {})[k], big = s => `<span class="tb">${h(s)}</span>`, sub = s => `<span class="ts">${h(s)}</span>`;
-  const val = v => typeof v === "number" ? nf(v) : v == null ? "—" : String(v);
-  let html;
-  if (!S.live.tdb) html = big("—") + sub(t("база не выбрана"));
-  else if (!r) html = big("—");
-  else if (r.loading) html = `<span class="tb pale"><span class="pulse"></span></span>`;
-  else if (r.err) html = big("—") + `<span class="ts err" title="${h(r.err)}">${h(r.err)}</span>`;
-  else if (k === "sessions") html = big(nf(r.data.active)) + sub(t("дольше 5 минут: {n}", {n: nf(r.data.long)}));
-  else if (k === "space") {
-    // бледно - две строки: диски базы и диски лога (даже если диск один и тот же); дисков несколько -
-    // все, где файлы могут расти, и их суммарное свободное место
-    const d = r.data, disk = (label, x) => `<span class="ts one" title="${h(x ? x.mounts.join(", ") : "")}">${h(x
-      ? t(x.mounts.length > 1 ? "{what}: диски {m} — свободно {n} МБ" : "{what}: диск {m} — свободно {n} МБ", {what: label, m: x.mounts.join(", "), n: nf(x.free_mb)})
-      : t("{what}: диск — нет данных", {what: label}))}</span>`;
-    html = big(t("данные: {n} МБ", {n: val(d.data_mb)})) + big(t("лог: {n} МБ", {n: val(d.log_mb)})) +
-      disk(t("база"), d.data_disk) + disk(t("лог"), d.log_disk);
-  } else html = big(val(r.data.main)) + (r.data.sub != null ? sub(val(r.data.sub)) : "");
-  el.innerHTML = html;
-  el.querySelectorAll(".tb").forEach(fitText);
+async function dbRefresh(only) {
+  const o = S.dbi, secs = S.live.secs;
+  if (!secs || !$("#dbi-db")) return;
+  const parts = (only || ["space", "tables", "functions", "temp"]).filter(secOpen);
+  for (const k of parts) secWait(k, t("Запрос к серверу…"));
+  await Promise.all(parts.map(async k => {
+    const token = secs[k].token = {};
+    let res;
+    try { res = await api("db_info", k, o.db); } catch (e) { res = {err: String(e.message || e)}; }
+    if (S.live.secs !== secs || secs[k].token !== token) return;
+    Object.assign(secs[k], {data: res, db: o.db});
+    if (k === "tables") Object.assign(secs[k], {open: null, sub: {}});
+    secs[k].render();
+  }));
 }
-// крупный текст в одну строку: шрифт уменьшается, пока строка не поместится (не меньше 11 px)
-function fitText(el) {
-  el.style.fontSize = "";
-  let s = parseFloat(getComputedStyle(el).fontSize);
-  while (el.scrollWidth > el.clientWidth + 1 && s > 11) el.style.fontSize = (s -= 1) + "px";
+function spaceRender() {
+  const L = S.live.space, body = secBody("space"), D = L.data;
+  if (!body || !D) return;
+  if (D.err) { $("#space-sum").innerHTML = ""; return secErr("space", D.err); }
+  const pg = isPg(), low = (avail, size) => avail != null && (avail < 1024 || avail < size * 0.1);
+  // порядок по умолчанию: главное сверху. MS SQL Server - данные PRIMARY, лог, остальные файловые группы;
+  // PostgreSQL - выбранная база, другие базы, табличные пространства, WAL, слоты; внутри - по занятому месту
+  const rank = r => pg ? (r.kind === "db" && r.name === L.db ? 0 : {db: 1, tablespace: 2, wal: 3, slot: 4}[r.kind] ?? 5)
+    : r.type === "ROWS" && r.filegroup === "PRIMARY" ? 0 : r.type === "LOG" ? 1 : 2;
+  const used = r => (pg ? r.size_mb : r.used_mb) || 0;
+  const rows = L.rows = [...D.rows].sort((a, b) => rank(a) - rank(b) || used(b) - used(a))
+    .map((r, i) => Object.assign(r, {i, low: !pg && low(r.avail_mb, r.size_mb)}));
+  $("#space-sum").innerHTML = (D.summary || []).map(s => `<span class="chip ${low(s.avail_mb, s.size_mb) ? "c-diff" : "c-ok"}">${h(fileType(s.type))}: ${
+    t("занято {u} из {s} МБ · можно занять еще {a}", {u: nf(s.used_mb), s: nf(s.size_mb), a: s.avail_mb == null ? t("нет данных") : nf(s.avail_mb) + " " + t("МБ")})}</span>`).join("");
+  $("#space-cnt").textContent = (pg ? t("база {db} выделена; свободное место на диске средствами SQL не узнать", {db: L.db}) : t("база {db}: файлов {n}", {db: L.db, n: rows.length})) + (D.note ? " · " + D.note : "");
+  const KINDS = {db: "база", tablespace: "табличное пространство", wal: "WAL", slot: "слот репликации"};
+  const cols = filled(pg ? [
+    ["name", "Объект", "", r => `<td class="b">${h(r.name)}</td>`],
+    ["kind", "Вид", "", r => `<td>${t(KINDS[r.kind] || r.kind)}</td>`],
+    ["place", "Табличное<br>пространство", "", r => `<td>${h(r.place || "")}</td>`],
+    ["size_mb", "Размер<br>МБ", "n", r => mbCell(r.size_mb, r.kind === "slot" && !r.extra && r.size_mb >= 1024 ? " hotv b" : "")],
+    ["extra", "", "", r => `<td>${r.kind === "wal" ? t("файлов: {n}", {n: nf(r.extra)}) : r.kind === "slot" ? (r.extra ? t("активен") : `${warnIco(WARN.slot)}<span class="hotv">${t("неактивен: WAL копится, пока слот не прочитают")}</span>`) : ""}</td>`, null, true],
+  ] : [
+    ["file", "Файл", "", r => `<td class="b">${h(r.file)}</td>`],
+    ["filegroup", "Файловая<br>группа", "", r => `<td>${h(r.filegroup || "")}</td>`],
+    ["type", "Тип", "", r => `<td>${h(fileType(r.type))}</td>`],
+    ["size_mb", "Размер<br>МБ", "n", r => mbCell(r.size_mb)],
+    ["used_mb", "Занято<br>МБ", "n", r => mbCell(r.used_mb)],
+    ["free_mb", "Свободно<br>в файле МБ", "n", r => mbCell(r.free_mb)],
+    ["growth_mb", "Прирост", "", r => `<td class="n${r.growth_pct ? " hotv" : ""}">${r.growth_pct ? warnIco(WARN.growPct) + r.growth_pct + "%" : r.growth_mb ? (r.growth_mb < GROW_SMALL_MB && r.size_mb >= 1024 ? warnIco(r.type === "LOG" ? WARN.growLog : WARN.growData) : "") + nf(r.growth_mb) + " " + t("МБ") : `<span class="pale">${t("не растет")}</span>`}</td>`, null, true],
+    ["max_mb", "Предел<br>МБ", "n", r => r.max_mb == null ? `<td class="n pale">${t("без предела")}</td>` : mbCell(r.max_mb), null, true],
+    ["avail_mb", "Можно занять<br>еще МБ", "n", r => r.low ? mbCell(r.avail_mb, " hotv b", warnIco(WARN.low)) : mbCell(r.avail_mb, " b")],
+    ["disk", "Диск", "", r => `<td class="mono">${h(r.disk || "")}</td>`],
+    ["disk_free_mb", "Свободно<br>на диске МБ", "n", r => mbCell(r.disk_free_mb)],
+    ["disk_total_mb", "Размер<br>диска МБ", "n", r => mbCell(r.disk_total_mb)],
+    ["path", "Путь", "", r => `<td class="mono pale clip" title="${h(r.path)}">${h(r.path)}</td>`],
+  ], rows);
+  L.hot = pg ? "size_mb" : "avail_mb";
+  body.innerHTML = rows.length ? srvTable("space", cols, rows, r => (pg ? r.kind === "db" && r.name === L.db : L.hl && r.file === L.hl) ? ' class="hl"' : "") : `<div class="empty">${t("Нет данных")}</div>`;
+  hbar(body);
+  if (L.hl && !L.hlDone) { L.hlDone = true; hlRow(body); }
 }
-function tileDialog(id) {
-  const x = (S.st.tiles || []).find(y => y.id === id) || {name: "", sql: ""};
-  window._tile = id;
-  modal(`<div class="dlg" style="width:640px"><div class="dh"><h2>${id ? t("Плашка") : t("Новая плашка")}</h2>
-      <span class="note">${t("Выводится последняя таблица скрипта: первая ячейка первой строки — крупно, первая ячейка второй строки — мелко. Скрипт выполняется в выбранной базе как есть: пишите только чтение, сервер боевой.")}</span></div>
-    <div class="db"><label class="field"><span class="lbl">${t("Название")}</span><input class="inp" id="tl-name" value="${h(x.name)}"></label>
-      <label class="field"><span class="lbl">${t("SQL-скрипт")}</span><textarea class="inp mono tsql" id="tl-sql" spellcheck="false">${h(x.sql)}</textarea></label></div>
-    <div class="df">${id ? `<a class="btn" style="margin-right:auto;color:#9A3412" onclick="tileDelete()">${I.trash(15)}${t("Удалить")}</a>` : ""}<a class="btn" onclick="closeModal()">${t("Отмена")}</a><a class="btn pri" onclick="tileSave()">${t("Сохранить")}</a></div></div>`);
+function tablesRender() {
+  const L = S.live.tables, body = secBody("tables"), D = L.data;
+  if (!body || !D) return;
+  if (D.err) return secErr("tables", D.err);
+  const pg = isPg();
+  const rows = L.rows = D.rows.map(r => Object.assign(r, {
+    dead_pct: pg && r.rows + r.dead > 0 ? Math.round(1000 * r.dead / (r.rows + r.dead)) / 10 : null,
+    idle: pg ? !(r.reads || r.ins || r.upd || r.del) : !(r.reads || r.updates),
+    many_dead: pg && r.dead > 10000 && r.rows + r.dead > 0 && r.dead / (r.rows + r.dead) > 0.2,
+    // полных просмотров больше поисков, и их не единицы (SCAN_MIN)
+    big_scan: r.total_mb >= 100 && (pg ? r.seq_scan > SCAN_MIN && r.seq_scan > (r.idx_scan || 0) : r.scans > SCAN_MIN && r.scans > (r.seeks || 0)),
+    parts: r.partitions > 1 ? r.partitions : null,
+    rb: r.rows >= ROW_BYTES_MIN ? r.row_bytes : null}));
+  const shown = rows.filter(r => r.total_mb >= L.size && (!L.unused || r.idle) && srvMatch(r, L.filter, ["table", "filegroup"]));
+  $("#tables-cnt").textContent = (shown.length !== rows.length ? t("{n} из {of}", {n: nf(shown.length), of: nf(rows.length)}) : nf(rows.length)) +
+    " · " + t("база {db}", {db: L.db}) + " · " +
+    (pg ? t("обращения — с последнего сброса статистики") : t("обращения — с перезапуска сервера"));
+  const hot = on => on ? " hotv b" : "";
+  const on = (id, kind) => L.open && L.open.id === id && L.open.kind === kind;
+  const acts = r => `<td class="acts2">${ibHtml(t("Показать индексы таблицы"), `tblSub(${r.id}, 'idx')`, on(r.id, "idx") ? I.down(14) : I.right(14))}${
+    ibHtml(t("Показать столбцы таблицы"), `tblSub(${r.id}, 'cols')`, I.cols(14), on(r.id, "cols") ? " on" : "")}${
+    ibHtml(t("Показать триггеры таблицы"), `tblSub(${r.id}, 'trg')`, I.bolt(14), on(r.id, "trg") ? " on" : "")}${
+    ibHtml(t("Показать SQL создания таблицы"), `tblSql(${r.id})`, I.code(14))}${ibHtml(t("К экрану «Нагрузка сервера», таблица «Тяжелые запросы»: запросы с этой таблицей"), goJs({k: "load", filter: bareName(r.table), db: L.db}), I.flame(14))}</td>`;
+  const cols = filled(pg ? [
+    [null, "", null, acts],
+    ["table", "Таблица", "", r => `<td class="b mono">${h(r.table)}</td>`],
+    ["filegroup", "Табличное<br>пространство", "", r => `<td>${h(r.filegroup || "")}</td>`],
+    ["rows", "Живых<br>строк", "n", r => numCell(r.rows)],
+    ["dead", "Мертвых<br>строк", "n", r => `<td class="n${hot(r.many_dead)}">${r.many_dead ? warnIco(WARN.dead) : ""}${nf(r.dead)}${r.dead_pct ? `<span class="sv">${nf(r.dead_pct)}%</span>` : ""}</td>`],
+    ["total_mb", "Размер МБ<br>(оценка)", "n", r => mbCell(r.total_mb, " b")],
+    ["rb", "Байт на<br>строку", "n", rbCell],
+    ["data_mb", "Таблица<br>МБ", "n", r => mbCell(r.data_mb)],
+    ["index_mb", "Индексы<br>МБ", "n", r => mbCell(r.index_mb)],
+    ["toast_mb", "TOAST<br>МБ", "n", r => mbCell(r.toast_mb)],
+    ["reads", "Строк<br>прочитано", "n", r => numCell(r.reads)],
+    ["seq_scan", "Seq scan", "n", r => warnNum(r.seq_scan, r.big_scan && WARN.scan)],
+    ["seq_rows", "Строк<br>seq scan", "n", r => numCell(r.seq_rows)],
+    ["idx_scan", "Index scan", "n", r => numCell(r.idx_scan)],
+    ["ins", "Встав-<br>лено", "n", r => numCell(r.ins)],
+    ["upd", "Изме-<br>нено", "n", r => numCell(r.upd)],
+    ["del", "Уда-<br>лено", "n", r => numCell(r.del)],
+    ["vacuum", "Последний<br>vacuum", "", r => tsCell(r.vacuum)],
+    ["analyze", "Последний<br>analyze", "", r => tsCell(r.analyze)],
+  ] : [
+    [null, "", null, acts],
+    ["table", "Таблица", "", r => `<td class="b mono">${h(r.table)}${r.heap ? ` <span class="chip sm" title="${t("Куча: таблица без кластерного индекса")}">${t("куча")}</span>` : ""}${r.heap && r.total_mb >= 100 ? warnIco(WARN.heap) : ""}</td>`],
+    ["filegroup", "Файловая<br>группа", "", r => `<td>${h(r.filegroup || "")}</td>`],
+    ["rows", "Строк", "n", r => numCell(r.rows)],
+    ["total_mb", "Занято<br>всего МБ", "n", r => mbCell(r.total_mb, " b")],
+    ["used_mb", "Исполь-<br>зовано МБ", "n", r => mbCell(r.used_mb)],
+    ["rb", "Байт на<br>строку", "n", rbCell],
+    ["data_mb", "Данные<br>МБ", "n", r => mbCell(r.data_mb)],
+    ["index_mb", "Индексы<br>МБ", "n", r => mbCell(r.index_mb)],
+    ["parts", "Секций", "n", r => numCell(r.parts)],
+    ["reads", "Обращений<br>на чтение", "n", r => numCell(r.reads)],
+    ["seeks", "Seek", "n", r => numCell(r.seeks)],
+    ["scans", "Scan", "n", r => warnNum(r.scans, r.big_scan && WARN.scan)],
+    ["lookups", "Lookup", "n", r => numCell(r.lookups)],
+    ["updates", "Изме-<br>нений", "n", r => numCell(r.updates)],
+    ["last_read", "Последнее<br>чтение", "", r => tsCell(r.last_read)],
+    ["last_update", "Последнее<br>изменение", "", r => tsCell(r.last_update)],
+  ], rows);
+  L.hot = "total_mb";
+  body.innerHTML = shown.length ? srvTable("tables", cols, shown, r => ` data-tid="${r.id}"`) : `<div class="empty">${rows.length ? t("Нет строк по фильтру") : t("Таблиц нет")}</div>`;
+  const ncol = (body.querySelector("thead tr") || {children: []}).children.length;
+  const tr = L.open && body.querySelector(`tr[data-tid="${L.open.id}"]`);
+  if (tr) tr.insertAdjacentHTML("afterend", `<tr class="sub"><td colspan="${ncol}">${SUB_HTML[L.open.kind](L.open.id)}</td></tr>`);
+  hbar(body);
 }
-async function tileSave() {
-  try {
-    const id = await api("save_tile", window._tile, $("#tl-name").value, $("#tl-sql").value);
-    closeModal();
-    await refresh();
-    renderTiles();
-    tileLoad(id);
-  } catch (e) { fail(e); }
+// подтаблица строки «Таблиц» - индексы или столбцы; открыта одна, данные запрашиваются один раз
+async function tblSub(id, kind) {
+  const L = S.live.tables, key = kind + id;
+  if (L.open && L.open.id === id && L.open.kind === kind) { L.open = null; tablesRender(); return; }
+  L.open = {id, kind};
+  if (!L.sub[key]) {
+    L.sub[key] = {loading: true};
+    tablesRender();
+    let x;
+    try {
+      const res = await api({idx: "table_indexes", cols: "table_columns", trg: "table_triggers"}[kind], L.db, id);
+      x = Array.isArray(res) ? {rows: res} : res;      // строки или {rows, note}
+    } catch (e) { x = {err: String(e.message || e)}; }
+    if (S.live.tables !== L) return;
+    L.sub[key] = x;
+  }
+  tablesRender();
 }
-async function tileDelete() {
-  if (!confirm(t("Удалить плашку?"))) return;
-  try { await api("delete_tile", window._tile); closeModal(); await refresh(); renderTiles(); } catch (e) { fail(e); }
+// триггеры таблицы: вид, события, включен ли, статистика выполнения; SQL - кнопкой у строки
+const TRG_ON = {O: "включен", D: "отключен", R: "только на реплике", A: "всегда"};
+function trgHtml(id) {
+  const x = S.live.tables.sub["trg" + id] || {}, pg = isPg();
+  const avg = r => r.execs ? Math.round(r.time / r.execs * 1000) / 1000 : null;
+  const cols = [["", r => `<td class="acts2">${ibHtml(t("Показать SQL триггера"), `trgSql(${id}, ${x.rows.indexOf(r)})`, I.code(14))}</td>`],
+    ["Триггер", r => `<td class="mono b">${h(r.name)}</td>`],
+    ["Включен", r => `<td>${r.enabled === "D" ? `<span class="chip sm c-diff">${t(TRG_ON.D)}</span>` : t(TRG_ON[r.enabled] || r.enabled)}</td>`],
+    ["Когда", r => `<td>${h(r.timing)}${pg ? `<span class="sv">${t(r.level === "row" ? "на каждую строку" : "на оператор")}</span>` : ""}</td>`],
+    ["События", r => `<td>${h(r.events || "")}</td>`]].concat(pg
+    ? [["Функция", r => `<td class="mono">${h(r.function)}</td>`], ["Вызовов", r => numCell(r.execs), true],
+       ["Время мс", r => msCell(r.time), true], ["Собственное<br>время мс", r => msCell(r.self_time), true], ["Время на<br>вызов мс", r => numCell(avg(r)), true]]
+    : [["Выполнений", r => numCell(r.execs), true], ["CPU мс", r => msCell(r.cpu), true], ["Время мс", r => msCell(r.time), true],
+       ["Время на<br>выполнение мс", r => numCell(avg(r)), true], ["Наибольшее<br>время мс", r => msCell(r.max_time), true],
+       ["Логических<br>чтений", r => numCell(r.reads), true], ["Последнее<br>выполнение", r => tsCell(r.last)], ["В кэше с", r => tsCell(r.cached)]]);
+  const note = pg ? t("статистика — функции триггера (pg_stat_user_functions): если функция служит нескольким таблицам, вызовы общие")
+    : t("статистика — sys.dm_exec_trigger_stats: с попадания плана триггера в кэш");
+  return subHtml(x, "Триггеров нет", cols) + (x.rows && x.rows.length ? `<div class="pale" style="font-size:12px;margin-top:4px">${note}${x.note ? " · " + h(x.note) : ""}</div>` : "");
+}
+function trgSql(id, i) {
+  const L = S.live.tables, r = L.sub["trg" + id].rows[i];
+  textDialog(t("SQL триггера {x}", {x: r.name}), r.text, `trigger_${r.name}`, null, L.db, false);
+}
+// SQL создания таблицы: собирает диалект по каталогу (table_sql), показ - окно текста (скопировать, открыть программой)
+async function tblSql(id) {
+  const L = S.live.tables, r = L.rows.find(x => x.id === id);
+  try { textDialog(t("SQL создания таблицы {x}", {x: r.table}), await api("table_sql", L.db, id), `create_${bareName(r.table)}`, null, L.db, false); }
+  catch (e) { fail(e); }
+}
+function subHtml(x, empty, cols) {      // cols: [заголовок, ячейка строки, числовая]
+  if (x.loading) return `<span class="pulse"></span>`;
+  if (x.err) return `<span class="hotv">${t("Не удалось получить данные: {err}", {err: h(x.err)})}</span>`;
+  if (!x.rows.length) return `<span class="pale">${t(empty)}</span>`;
+  return `<table class="t compact isub"><thead><tr>${cols.map(c => `<th${c[2] ? ' class="n"' : ""}>${t(c[0])}</th>`).join("")}</tr></thead><tbody>${x.rows.map(r => `<tr>${cols.map(c => c[1](r)).join("")}</tr>`).join("")}</tbody></table>`;
+}
+// лишние индексы: тот же ключ (и включенные, и условие) или ключ - начало ключа другого обычного индекса
+const IDX_PLAIN = r => r.type === "NONCLUSTERED" || r.type === "btree";
+function idxDup(rows, r) {
+  const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+  if (r.primary) return null;
+  for (const o of rows) {
+    if (o === r || o.filter !== r.filter) continue;
+    // полный повтор: помечается неуникальный (оба уникальные или оба нет - тот, что ниже в списке)
+    if (same(o.keys, r.keys) && same([...o.include].sort(), [...r.include].sort()) && IDX_PLAIN(o) === IDX_PLAIN(r)
+        && (o.primary || (o.unique && !r.unique) || (!!o.unique === !!r.unique && rows.indexOf(o) < rows.indexOf(r))))
+      return t("Тот же ключ, что у индекса {x}: один из них лишний, а сервер обновляет оба при каждом изменении таблицы", {x: o.name});
+    // начало ключа другого: только неуникальный обычный индекс без условия, и его включенные столбцы есть в другом
+    if (!r.unique && !r.filter && IDX_PLAIN(r) && IDX_PLAIN(o) && o.keys.length > r.keys.length && same(o.keys.slice(0, r.keys.length), r.keys)
+        && r.include.every(c => o.keys.includes(c) || o.include.includes(c)))
+      return t("Ключ этого индекса — начало ключа индекса {x}: запросы по этому ключу может обслужить и {x}, этот индекс, возможно, лишний", {x: o.name});
+  }
+  return null;
+}
+function idxHtml(id) {
+  const L = S.live.tables, x = L.sub["idx" + id] || {}, pg = isPg(), tb = L.rows.find(r => r.id === id) || {};
+  const changed = pg ? tb.ins || tb.upd || tb.del : null;
+  const unused = r => r.unused && (pg ? changed : r.updates > 0);      // не читается, но таблица меняется
+  const keys = r => `<td class="mono">${h(r.keys.join(", "))}${r.include.length ? `<span class="sv">INCLUDE ${h(r.include.join(", "))}</span>` : ""}${r.filter ? `<span class="sv">WHERE ${h(r.filter)}</span>` : ""}</td>`;
+  // кластеризация: в каком порядке лежат строки таблицы относительно индекса
+  const order = r => pg ? `<td class="n"${r.correlation == null ? "" : ` title="${t("Корреляция первого столбца ключа (статистика ANALYZE): 100% — строки таблицы лежат в порядке индекса, около 0 — вразброс, и чтение диапазона по индексу читает много разных страниц")}"`}>${r.correlation == null ? "" : nf(Math.round(Math.abs(r.correlation) * 100)) + "%"}${r.clustered ? `<span class="sv">CLUSTER</span>` : ""}</td>`
+    : `<td>${r.clustered ? t("таблица хранится в порядке этого индекса") : ""}</td>`;
+  const cols = [["Индекс", r => {
+    const dup = x.rows && idxDup(x.rows, r);
+    return `<td class="mono b">${h(r.name || t("(куча)"))}${r.primary ? ' <span class="chip sm c-acc">PK</span>' : r.unique ? ` <span class="chip sm">${t("уникальный")}</span>` : ""}${unused(r) ? warnIco(WARN.unusedIdx) : ""}${dup ? warnIco(dup) : ""}</td>`;
+  }], ["Вид", r => `<td>${h(r.type || "")}</td>`], ["Ключ", keys], [pg ? "Порядок строк<br>таблицы" : "Порядок строк таблицы", order, pg],
+    ["Размер МБ", r => mbCell(r.mb), true], [pg ? "Index scan" : "Обращений на чтение", r => numCell(r.reads), true]].concat(pg
+    ? [["Строк прочитано", r => numCell(r.tup_read), true], ["Строк выбрано", r => numCell(r.tup_fetch), true]]
+    : [["Seek", r => numCell(r.seeks), true], ["Scan", r => numCell(r.scans), true], ["Lookup", r => numCell(r.lookups), true], ["Изменений", r => numCell(r.updates), true],
+       ["Последнее чтение", r => tsCell(r.last_read)], ["Последнее изменение", r => tsCell(r.last_update)]]);
+  return subHtml(x, "Индексов нет", cols);
+}
+const SUB_HTML = {idx: id => idxHtml(id), cols: id => colsHtml(id), trg: id => trgHtml(id)};
+function colsHtml(id) {
+  const x = S.live.tables.sub["cols" + id] || {}, pg = isPg();
+  const flags = r => [r.identity && "IDENTITY", r.computed && t("вычисляемый"), r.sparse && "SPARSE"].filter(Boolean).map(f => ` <span class="chip sm">${f}</span>`).join("");
+  const cols = [["Столбец", r => `<td class="mono b">${h(r.column)}${flags(r)}${r.null_pct === 100 ? warnIco(WARN.emptyCol) : ""}</td>`],
+    ["Тип", r => `<td class="mono">${h(r.type)}</td>`],
+    ["NULL", r => `<td>${r.nullable ? t("можно") : `<span class="pale">${t("нельзя")}</span>`}</td>`],
+    pg ? ["Байт<br>в среднем", r => `<td class="n"${r.var ? ` title="${t("Средний размер значения по статистике ANALYZE (у длинных значений — после сжатия)")}"` : ""}>${nf(r.bytes)}</td>`, true]
+      : ["Байт", r => `<td class="n">${r.bytes == null ? "max" : (r.var ? t("до {n}", {n: nf(r.bytes)}) : nf(r.bytes))}</td>`, true]];
+  if (pg) cols.push(["NULL<br>в строках %", r => numCell(r.null_pct), true], ["Различных<br>значений", r => numCell(r.distinct), true]);
+  const note = pg ? t("«Байт в среднем», «NULL в строках %» и «Различных значений» — статистика ANALYZE") : t("«Байт» — по объявленному типу: средний размер значения без чтения данных таблицы не узнать");
+  return subHtml(x, "Столбцов нет", cols) + (x.rows && x.rows.length ? `<div class="pale" style="font-size:12px;margin-top:4px">${note}</div>` : "");
+}
+function funcsRender() {
+  const L = S.live.functions, body = secBody("functions"), D = L.data;
+  if (!body || !D) return;
+  if (D.err) return secErr("functions", D.err);
+  const pg = isPg();
+  const rows = L.rows = D.rows.map(r => Object.assign(r, pg ? {object: r.function, execs: r.calls} : {}, {time_avg: (pg ? r.calls : r.execs) ? Math.round(r.time / (pg ? r.calls : r.execs) * 10) / 10 : null}));
+  const shown = rows.filter(r => srvMatch(r, L.filter, ["object", "type"]));
+  $("#functions-cnt").textContent = (shown.length !== rows.length ? t("{n} из {of}", {n: shown.length, of: rows.length}) : String(rows.length)) + " · " + t("база {db}", {db: L.db}) + " · " +
+    (pg ? t("с последнего сброса статистики") : t("с попадания плана в кэш, только объекты с планом в кэше")) + (D.note ? " · " + D.note : "");
+  const cols = filled([
+    [null, "", null, r => `<td class="acts2">${ibHtml(t("К экрану «Нагрузка сервера», таблица «Тяжелые запросы»: запросы с этим объектом"), goJs({k: "load", filter: bareName(r.object), db: L.db}), I.flame(14))}</td>`],
+    ["object", pg ? "Функция" : "Объект", "", r => `<td class="b mono">${h(r.object)}</td>`],
+    ["type", "Тип", "", r => `<td>${h(r.type || "")}</td>`],
+    ["execs", "Выпол-<br>нений", "n", r => numCell(r.execs)],
+    ["cpu", "CPU<br>мс", "n", r => msCell(r.cpu)],
+    ["time", "Время<br>мс", "n", r => msCell(r.time)],
+    ["self_time", "Собственное<br>время мс", "n", r => msCell(r.self_time)],
+    ["time_avg", "Время на<br>выполнение мс", "n", r => numCell(r.time_avg)],
+    ["reads", "Логических<br>чтений", "n", r => numCell(r.reads)],
+  ], rows);
+  L.hot = "time";
+  body.innerHTML = shown.length ? srvTable("functions", cols, shown) : `<div class="empty">${rows.length ? t("Нет строк по фильтру") : t("Статистики нет")}</div>`;
+  hbar(body);
+}
+function tempRender() {
+  const L = S.live.temp, body = secBody("temp"), D = L.data;
+  if (!body || !D) return;
+  if (D.err) { $("#temp-sum").innerHTML = ""; $("#temp-more").innerHTML = ""; return secErr("temp", D.err); }
+  const pg = isPg(), s = D.summary, rows = L.rows = D.rows.map((r, i) => Object.assign(r, {i}));
+  $("#temp-sum").innerHTML = s ? `<span class="chip">tempdb: ${t("всего {a} МБ, свободно {f} МБ", {a: nf(s.total_mb), f: nf(s.free_mb)})}</span><span class="chip">${t("хранилище версий {n} МБ", {n: nf(s.version_mb)})}</span><span class="chip">${t("внутренние объекты {n} МБ", {n: nf(s.internal_mb)})}</span><span class="chip">${t("пользовательские объекты {n} МБ", {n: nf(s.user_mb)})}</span>` : "";
+  $("#temp-cnt").textContent = t("сессий: {n}", {n: rows.length}) + " · " + t("весь сервер") + (D.note ? " · " + D.note : "");
+  const cols = filled([
+    [null, "", null, r => `<td class="acts2">${r.text ? ibHtml(t("Показать текст запроса"), `tempText(${r.i})`, I.note(14)) : ""}${r.db ? ibHtml(t("К экрану «Текущие запросы»: эта сессия"), goJs({k: "current", hl: r.spid}), I.pulse(14)) + ibHtml(t("Наблюдать сессию"), `startSession(${r.spid})`, I.eye(14)) : ""}</td>`],
+    ["spid", "№", "n", r => `<td class="n b">${r.spid}</td>`],
+    ["db", "База", "", r => `<td>${h(r.db || "")}</td>`],
+    ["login", "Логин", "", r => `<td>${h(r.login || "")}</td>`],
+    ["program", "Программа", "", r => `<td class="clip" title="${h(r.program || "")}">${h(r.program || "")}</td>`],
+    ["status", "Состояние", "", r => `<td>${h(r.status || "")}</td>`],
+    ["elapsed", "Выпол-<br>няется", "n", r => `<td class="n">${r.elapsed != null ? `<span class="mono">${clock(r.elapsed)}</span>` : ""}</td>`],
+    ["total_mb", "Всего<br>МБ", "n", r => mbCell(r.total_mb, " b")],
+    ["user_mb", "Пользовательские МБ<br>(#temp, @table)", "n", r => mbCell(r.user_mb)],
+    ["internal_mb", "Внутренние МБ<br>(сортировки, hash)", "n", r => mbCell(r.internal_mb)],
+    ["files", "Временных<br>файлов", "n", r => numCell(r.files)],
+    ["text", "Запрос", "", r => `<td class="mono clip wide" title="${h(r.text || "")}">${h((r.text || "").replace(/\s+/g, " ").slice(0, 200))}</td>`],
+  ], rows);
+  L.hot = "total_mb";
+  body.innerHTML = rows.length ? srvTable("temp", cols, rows, r => r.spid === L.hl ? ' class="hl"' : "") : `<div class="empty">${t("Сейчас ни одна сессия не занимает временное место")}</div>`;
+  hbar(body);
+  if (L.hl && !L.hlDone) {
+    L.hlDone = true;
+    if (rows.some(r => r.spid === L.hl)) hlRow(body); else toast(t("Сессия {n} сейчас не занимает временного места", {n: L.hl}));
+  }
+  const more = $("#temp-more");
+  if (pg) more.innerHTML = (D.dbs || []).length ? `<div class="tbar"><h2 style="font-size:14px">${t("Временные файлы баз")}</h2><span class="secn">(${t("с последнего сброса статистики")})</span></div><div class="tscroll"><table class="t compact"><thead><tr><th>${t("База")}</th><th class="n">${t("Файлов")}</th><th class="n">${t("МБ")}</th><th>${t("Статистика с")}</th></tr></thead><tbody>${D.dbs.map(x => `<tr><td>${h(x.db)}</td>${numCell(x.files)}${mbCell(x.mb)}${tsCell(x.since)}</tr>`).join("")}</tbody></table></div>` : "";
+  else if (dbms().has_temp_tables) more.innerHTML = L.tables ? tempTablesHtml() : `<div class="tbar"><a class="btn sm" onclick="tempTables()">${I.cols(15)}${t("Самые большие временные таблицы")}</a><span class="pale" style="font-size:12px">${t("каталог tempdb; сессию у таблицы не узнать без чтения блокировок — это долгий запрос")}</span></div>`;
+}
+function tempText(i) { const r = S.live.temp.rows[i]; textDialog(t("Сессия {n}", {n: r.spid}), r.text, `temp_${r.spid}`, null, r.db); }
+async function tempTables() {
+  const L = S.live.temp;
+  $("#temp-more").innerHTML = `<div class="empty"><span class="pulse"></span></div>`;
+  try { L.tables = {rows: await api("temp_tables")}; } catch (e) { L.tables = {err: String(e.message || e)}; }
+  if (S.live.temp === L) tempRender();
+}
+function tempTablesHtml() {
+  const x = S.live.temp.tables;
+  if (x.err) return `<div class="empty">${t("Не удалось получить данные: {err}", {err: h(x.err)})}</div>`;
+  return `<div class="tbar"><h2 style="font-size:14px">${t("Самые большие временные таблицы")}</h2><span class="secn">(tempdb.sys.tables)</span><a class="btn sm" style="margin-left:auto" onclick="tempTables()">${I.refresh(14)}${t("Обновить")}</a></div>
+    <div class="tscroll">${x.rows.length ? `<table class="t compact"><thead><tr><th>${t("Таблица")}</th><th class="n">${t("Строк")}</th><th class="n">${t("МБ")}</th><th>${t("Создана")}</th></tr></thead><tbody>${x.rows.map(r => `<tr><td class="mono b" title="${h(r.internal_name)}">${h(r.name)}</td>${numCell(r.rows)}${mbCell(r.mb)}${tsCell(r.created)}</tr>`).join("")}</tbody></table>` : `<div class="empty">${t("Временных таблиц нет")}</div>`}</div>`;
 }
 
 // ---------------------------------------------------------------- новое наблюдение (§5.9)
 function viewNewSession(m) {
   m.innerHTML = `
     <header style="display:flex;flex-direction:column;gap:8px">${backLine()}<h1>${t("Новое наблюдение")}</h1></header>
-    ${TILES_ON ? '<section class="kpis tiles" id="tl-box"></section>' : ""}
     <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
       <section class="card" style="flex:0 0 300px;padding:24px;display:flex;flex-direction:column;gap:16px">
         <span class="lbl">${t("Номер сессии")}</span>
@@ -2499,19 +3202,15 @@ function viewNewSession(m) {
       </section>
     </div>`;
   $("#spid").focus();
-  // фильтр «База данных» по умолчанию - база подключения; он же - база плашек
+  // фильтр «База данных» по умолчанию - база подключения
   S.live.flt = {db: (S.st.connection || {}).database || "", program: "", login: "", active: true};
-  S.live.tiles = {};
-  S.live.tdb = null;
-  tilesDb(S.live.flt.db);
-  loadSessions(true);
+  loadSessions();
 }
-async function loadSessions(first) {      // first - при открытии: «Активные сессии» уже загружает tilesDb
-  if (!first && TILES_ON && S.live.tdb) tileLoad("sessions");
+async function loadSessions() {
   try { S.live.sessions = await api("list_sessions"); } catch (e) { $("#ss-body").innerHTML = `<div class="empty">${t("Список не получен: {err}", {err: h(e.message || e)})}</div>`; return; }
   // имя базы подключения - как его пишет сервер (регистр)
   const f = S.live.flt, same = S.live.sessions.find(x => (x.db || "").toLowerCase() === f.db.toLowerCase());
-  if (same && same.db !== f.db) { f.db = same.db; tilesDb(f.db); }
+  if (same && same.db !== f.db) f.db = same.db;
   renderSessions();
 }
 // колонки списка сессий (srvTable, вид "ss"): ключ, заголовок, "n" - число
@@ -2530,7 +3229,7 @@ function renderSessions() {
   // выбранное значение остается в списке, даже если сейчас таких сессий нет (база подключения)
   const opts = k => ["", ...new Set(all.map(x => x[k] || "").concat(f[k] ? [f[k]] : []))].map(x => `<option value="${h(x)}"${f[k] === x ? " selected" : ""}>${x === "" ? t("Все") : h(x)}</option>`).join("");
   $("#ss-flt").innerHTML = [["db", "База данных"], ["program", "Программа"], ["login", "Логин"]].map(([k, lbl]) =>
-    `<label class="field"><span class="lbl">${t(lbl)}</span><select class="inp" onchange="S.live.flt.${k}=this.value;renderSessions()${k === "db" ? ";tilesDb(this.value)" : ""}">${opts(k)}</select></label>`).join("") +
+    `<label class="field"><span class="lbl">${t(lbl)}</span><select class="inp flt${f[k] ? " set" : ""}" onchange="S.live.flt.${k}=this.value;renderSessions()">${opts(k)}</select></label>`).join("") +
     `<span class="popt" style="align-self:end;height:44px" onclick="S.live.flt.active=!S.live.flt.active;renderSessions()"><span class="sw${f.active ? " on" : ""}"></span>${t("Только выполняющиеся")}</span>`;
   const rows = all.filter(x => (!f.db || x.db === f.db) && (!f.program || x.program === f.program) && (!f.login || x.login === f.login) && (!f.active || x.elapsed != null));
   $("#ss-cnt").textContent = t("{n} из {of}", {n: rows.length, of: all.length}) + " · " + (s ? t("по колонке") : t("база → программа → номер"));

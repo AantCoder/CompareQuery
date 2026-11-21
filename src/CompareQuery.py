@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""CompareQuery: выполнение SQL-запроса на MS SQL Server и сравнение результатов запусков.
+"""CompareQuery: выполнение SQL-запроса на MS SQL Server или PostgreSQL и сравнение результатов запусков.
 
-Режим 1, выполнение:  python CompareQuery.py query.sql [--rollback] [--repeat N] [--profile]
+Режим 1, выполнение:  python CompareQuery.py query.sql [--rollback] [--repeat N] [--profile] [--explain [МС]]
 Режим 2, сравнение:   python CompareQuery.py query_A.txt query_B.txt
 Режим 3, наблюдение:  python CompareQuery.py --session N
+Просмотр сервера:     python CompareQuery.py --show ВИД [--interval S] [--csv [файл]], --kill N, --cancel N
+
+Все, что зависит от СУБД (драйвер, строка подключения, батчи, типы, запросы к системным представлениям),
+вынесено в диалект: cq_mssql.py (MS SQL Server), cq_pg.py (PostgreSQL); какой - по строке подключения.
+Ядро обращается к серверу только через него.
 
 Батч, первая строка которого "-- ignore in test", выполняется, но в отчеты не попадает.
 Пользователю - README.md, устройство и принятые решения - CLAUDE.md (оба рядом со скриптом).
@@ -19,11 +24,10 @@ import json
 import math
 import os
 import pickle
-import queue
 import re
+import shutil
 import signal
 import statistics
-import struct
 import sys
 import tempfile
 import threading
@@ -60,6 +64,7 @@ APP_NAME = "CompareQuery"     # имя программы в подключен�
 PROFILE_INTERVAL_MS = 100     # --profile: интервал опроса рабочей сессии
 PROFILE_FAST_MS = 30          # --profile: следующий опрос, если выборка попала внутрь функции
 PROFILE_PLAN_TOP = 30         # --profile: для скольких операторов (по времени) сохранять план
+EXPLAIN_MIN_MS = 0            # --explain без числа (PostgreSQL): планы операторов не короче, мс
 SAMPLE_SLOW_MS = 80           # --profile, --session: ответ на запрос строки запроса сессии дольше этого - задержка
 REGISTRY_TEXT_LEN = 100       # --profile: символов начала текста оператора в registry.csv
 SESSION_FLUSH_S = 10          # --session: файлы реестра перезаписываются раз в столько секунд
@@ -84,14 +89,16 @@ WRITE_CHUNK = 10000           # строк за одну запись в фай�
 LOOKUP_WAIT_S = 30            # --profile: сколько ждать в конце недополученные тексты операторов
 SETTINGS_PATH = Path(__file__).resolve().with_suffix(".json")
 
-HELP = """Выполнение SQL-запроса (MS SQL Server) и сравнение результатов запусков.
+HELP = """Выполнение SQL-запроса (MS SQL Server или PostgreSQL - по строке подключения) и сравнение результатов запусков.
 
 Режим 1, выполнение:
-  CompareQuery.py <файл.sql> [--rollback] [--repeat N] [--profile]
+  CompareQuery.py <файл.sql> [--rollback] [--repeat N] [--profile] [--explain [МС]]
   Без --rollback запрос выполняется без транзакции (autocommit).
   С --rollback все батчи выполняются в одной транзакции, в конце rollback.
   --repeat N: выполнить N раз (N >= 2), первый прогон - прогрев, счетчики - медиана остальных.
   --profile: реестр операторов по времени в отдельной папке.
+  --explain [МС] (PostgreSQL, включает --profile): фактические планы операторов не короче МС мс
+  (auto_explain, нужны права суперпользователя; без них - отдельный прогон EXPLAIN ANALYZE, только с --rollback).
   Батч, первая строка которого "-- ignore in test", выполняется, но в отчет не попадает
   (подготовка тестовых данных).
   По ходу выполнения выводятся сообщения SQL (PRINT, RAISERROR, ошибки) с временем сервера.
@@ -102,6 +109,20 @@ HELP = """Выполнение SQL-запроса (MS SQL Server) и сравн�
 Режим 3, наблюдение за чужой сессией (реестр как у --profile, обновляется раз в 10 с):
   CompareQuery.py --session N
   Папка реестра: Sessions_profile\\Session_<время>_N. Выход: любая клавиша, Ctrl+C или завершение сессии N.
+
+Просмотр сервера (те же запросы, что в GUI):
+  CompareQuery.py --show ВИД [--top N] [--csv [файл]] [--order X] [--hours N] [--interval S]
+  sessions - пользовательские сессии, current - текущие запросы и блокировки,
+  heavy - тяжелые запросы кэша планов (--order: показатель, --hours: за последние N часов),
+  tables - таблицы текущей базы (чтения, изменения), functions - процедуры и функции,
+  io - ввод-вывод (файлы баз у MS SQL Server, pg_stat_io у PostgreSQL),
+  waits - ожидания сервера за S секунд (по умолчанию 10).
+  --interval S: два снимка с паузой S секунд и их разница - что происходило за эти секунды
+  (heavy - только PostgreSQL; tables, functions, io; у waits - длительность).
+  В консоль - первые --top строк (по умолчанию 20) и основные колонки; --csv - все строки и колонки
+  в файл CSV (без имени файла - <вид>_<время>.csv в текущей папке).
+  --kill N: закрыть сессию N, --cancel N: отменить ее текущий запрос (только PostgreSQL);
+  оба - после подтверждения в консоли.
 
 Время в отчетах, именах файлов, реестрах и сообщениях SQL - по часам сервера.
 
@@ -382,47 +403,13 @@ class ServerTime:
         return cls.at(perf())
 
 
-def query_spid(cur):
-    """@@SPID рабочего подключения; тем же запросом - замер часов сервера (ServerTime)."""
-    t = perf()
-    row = cur.execute("SELECT @@SPID, SYSDATETIME()").fetchone()
-    ServerTime.set(row[1], (t + perf()) // 2)
-    return int(row[0])
-
-
 def clock_text(t):
     """Время суток с миллисекундами: чч:мм:сс.ммм."""
     return t.strftime("%H:%M:%S.%f")[:-3]
 
 
-MESSAGE_KIND_RE = re.compile(r"\[(\w*)\]\s*\((-?\d+)\)")
-MESSAGE_SOURCE_RE = re.compile(r"^(?:\[[^\]]*\])+")
-
-
-def user_message(kind, text):
-    """Сообщение сервера для показа по ходу выполнения: (текст, ошибка) или None для служебного.
-
-    kind у pyodbc - "[SQLSTATE] (номер)". Показываются PRINT (номер 0), RAISERROR с текстом
-    и пользовательские сообщения (номер от 50000), ошибки (SQLSTATE не классов 00 и 01).
-    Служебные информационные ("Changed database context" 5701, "Null value is eliminated" 8153
-    и т. п.) - нет. Префикс драйвера "[Microsoft][ODBC ...][SQL Server]" убирается."""
-    text = MESSAGE_SOURCE_RE.sub("", str(text)).strip()
-    m = MESSAGE_KIND_RE.search(str(kind))
-    if not m:
-        return text, False
-    error = m.group(1)[:2] not in ("00", "01")
-    number = int(m.group(2))
-    if not error and number != 0 and number < 50000:
-        return None
-    return text, error
-
-
-def show_message(kind, text, **fields):
+def show_message(text, error, **fields):
     """Сообщение SQL по ходу выполнения: в консоль с временем сервера (с --events - событием message)."""
-    shown = user_message(kind, text)
-    if shown is None:
-        return
-    text, error = shown
     t = ServerTime.now()
     Journal.add(text, "Ошибка" if error else "SQL")
     if Events.on:
@@ -462,29 +449,87 @@ class NowEvents:
             Events.emit("wait", wait=wait[0], blocked_by=wait[1], **self.fields)
 
 
-# ============================================================ файл настроек
+# ============================================================ СУБД: диалект
 
-def default_driver():
-    """Новейший 'ODBC Driver N for SQL Server', иначе 'SQL Server'."""
+PG_CONN_RE = re.compile(r"\s*postgres(?:ql)?://|(?:^|\s)(?:host|hostaddr|dbname|port|user|sslmode|service)\s*=", re.I)
+
+
+def is_postgres(cs):
+    """Строка подключения PostgreSQL (libpq: URI postgresql://... или 'host=... dbname=...'), а не ODBC (Driver=...;)."""
+    cs = cs or ""
+    return bool(PG_CONN_RE.match(cs) or (not re.search(r"(?:^|;)\s*(?:driver|dsn)\s*=", cs, re.I)
+                                         and PG_CONN_RE.search(cs)))
+
+
+def dialect_module(cs):
+    if is_postgres(cs):
+        import cq_pg
+        return cq_pg
+    import cq_mssql
+    return cq_mssql
+
+
+def get_dialect(settings):
+    """Диалект СУБД по строке подключения (settings None - MS SQL Server, только для примера настроек): драйвер,
+    подключения, батчи, типы и все запросы к серверу."""
+    m = dialect_module((settings or {}).get("connection_string"))
+    return m.PostgreSQL(settings) if m.__name__ == "cq_pg" else m.MSSQL(settings)
+
+
+def conn_parts(cs):
+    """(сервер, база) строки подключения - для подписей (без подключения к серверу)."""
+    return dialect_module(cs).conn_parts(cs or "")
+
+
+def db_connect(db, app, **kw):
+    """Подключение диалекта db; ошибка драйвера - ScriptError."""
     try:
-        import pyodbc
-        drivers = pyodbc.drivers()
-    except Exception:
-        drivers = []
-    best = None
-    for d in drivers:
-        m = re.fullmatch(r"ODBC Driver (\d+) for SQL Server", d, re.I)
-        if m and (best is None or int(m.group(1)) > best[0]):
-            best = (int(m.group(1)), d)
-    return best[1] if best else "SQL Server"
+        return db.connect(app, **kw)
+    except db.Error as e:
+        raise ScriptError(f"ошибка подключения: {err_text(e)}")
 
+
+def fetch_sets(cur, sets=1):
+    """Строки результата курсора после execute: sets=1 - строки первого набора с колонками, N - список первых
+    N таких наборов, -1 - строки последнего. Наборы без колонок (SET и т. п.) пропускаются."""
+    if sets == -1:
+        last = []
+        while True:
+            if cur.description is not None:
+                last = [list(r) for r in cur.fetchall()]
+            if not cur.nextset():
+                return last
+    out = []
+    while len(out) < sets:
+        while cur.description is None:
+            if not cur.nextset():
+                return out[0] if sets == 1 and out else out
+        out.append([list(r) for r in cur.fetchall()])
+        if len(out) < sets and not cur.nextset():
+            break
+    return out[0] if sets == 1 else out
+
+
+def conn_query(conn):
+    """Функция query(sql, *params, sets=1) на подключении conn - для запросов диалекта."""
+    def query(sql, *params, sets=1):
+        cur = conn.cursor()
+        try:
+            cur.execute(sql, *params)
+            return fetch_sets(cur, sets)
+        finally:
+            cur.close()
+    return query
+
+
+# ============================================================ файл настроек
 
 def ensure_settings_file():
     """Создает файл настроек с примером, если его нет. Возвращает True, если создал."""
     if SETTINGS_PATH.exists():
         return False
     sample = {
-        "connection_string": f"Driver={{{default_driver()}}};Server=localhost;Database=master;TrustServerCertificate=yes",
+        "connection_string": get_dialect(None).sample_connection_string(),
         "login": "sa",
         "password": "",
         "ignored_columns": [{"mask": "ExampleExclude", "tables": {"*": ["id"], "2": ["CreatedAt"]}}],
@@ -537,58 +582,6 @@ def read_settings():
     return {"connection_string": cs.strip(), "login": login, "password": pwd, "ignored_columns": parsed}
 
 
-def conn_str_keys(cs):
-    """Имена ключей строки подключения (нижний регистр), с учетом значений в {...}."""
-    keys, i, n = [], 0, len(cs)
-    while i < n:
-        eq = cs.find("=", i)
-        if eq < 0:
-            break
-        key = cs[i:eq].strip().lower()
-        i = eq + 1
-        while i < n and cs[i] == " ":
-            i += 1
-        if i < n and cs[i] == "{":
-            i += 1
-            while i < n:
-                if cs[i] == "}":
-                    if i + 1 < n and cs[i + 1] == "}":
-                        i += 2
-                        continue
-                    i += 1
-                    break
-                i += 1
-        semi = cs.find(";", i)
-        i = n if semi < 0 else semi + 1
-        if key:
-            keys.append(key)
-    return keys
-
-
-def brace(value):
-    return "{" + value.replace("}", "}}") + "}"
-
-
-def build_conn_str(settings, app):
-    """Строка подключения с логином и именем программы (APP, если его нет в строке)."""
-    cs, login, pwd = settings["connection_string"], settings["login"], settings["password"]
-    keys = conn_str_keys(cs)
-    if not cs.endswith(";"):
-        cs += ";"
-    if "app" not in keys:
-        cs += f"APP={app};"
-    if not login:
-        # пустой логин - вход Windows: без Trusted_Connection драйвер входит пустым логином SQL и получает отказ
-        if not {"uid", "pwd", "trusted_connection", "authentication"} & set(keys):
-            cs += "Trusted_Connection=yes;"
-        return cs
-    if "uid" in keys or "pwd" in keys:
-        raise ScriptError("строка подключения уже содержит UID или PWD, а в настройках задан login: "
-                          "оставьте что-то одно")
-    uid = brace(login) if set(login) & set(";{}=") or login != login.strip() else login
-    return f"{cs}UID={uid};PWD={brace(pwd)}"
-
-
 def ignored_columns(groups, stem):
     """Игнорируемые колонки групп, маска которых подходит к имени SQL-файла: {"*" или номер: [имена]}."""
     out = {}
@@ -611,9 +604,6 @@ def ignored_for_table(ignored, n):
 
 # ============================================================ SQL-файл
 
-GO_RE = re.compile(r"^[ \t]*go(?:[ \t]+(\d+))?[ \t]*(?:--.*|/\*.*\*/[ \t]*)?$", re.I)
-
-
 def read_sql(path):
     data = path.read_bytes()
     if data.startswith(b"\xef\xbb\xbf"):
@@ -628,23 +618,6 @@ def read_sql(path):
     return text, hashlib.sha1(data).hexdigest()
 
 
-def split_batches(text):
-    """Строка, состоящая только из GO, разделяет батчи. GO N не поддерживается.
-    Возвращает [(номер первой строки батча в файле, текст батча)]."""
-    batches, cur, start = [], [], 1
-    for lineno, line in enumerate(text.split("\n"), 1):
-        m = GO_RE.match(line.rstrip("\r"))
-        if m:
-            if m.group(1) is not None:
-                raise ScriptError(f"строка {lineno}: 'GO {m.group(1)}' не поддерживается")
-            batches.append((start, "\n".join(cur)))
-            cur, start = [], lineno + 1
-        else:
-            cur.append(line)
-    batches.append((start, "\n".join(cur)))
-    return [(s, b) for s, b in batches if b.strip()]
-
-
 IGNORE_RE = re.compile(r"[ \t]*--[ \t]*ignore in test\b", re.I)
 
 
@@ -654,7 +627,7 @@ def is_ignored_batch(text):
     return bool(IGNORE_RE.match(first))
 
 
-# ============================================================ конвертеры pyodbc
+# ============================================================ особые значения (их создают конвертеры диалекта)
 
 class XmlStr(str):
     """Значение xml."""
@@ -666,39 +639,6 @@ class VariantBytes(bytes):
 
 class UdtBytes(bytes):
     """Значение UDT (geography, geometry, hierarchyid)."""
-
-
-def conv_datetimeoffset(raw):
-    if raw is None:
-        return None
-    y, mo, d, h, mi, s, frac, tzh, tzm = struct.unpack("<6hI2h", raw)
-    tz = dt.timezone(dt.timedelta(hours=tzh, minutes=tzm))
-    return dt.datetime(y, mo, d, h, mi, s, frac // 1000, tz)
-
-
-def conv_xml(raw):
-    if raw is None:
-        return None
-    if raw.startswith(b"\xff\xfe"):
-        text = raw[2:].decode("utf-16-le", "replace")
-    elif raw.startswith(b"\xef\xbb\xbf"):
-        text = raw[3:].decode("utf-8", "replace")
-    elif b"\x00" in raw and len(raw) % 2 == 0:
-        text = raw.decode("utf-16-le", "replace")
-    else:
-        text = raw.decode("utf-8", "replace")
-    return XmlStr(text)
-
-
-def conv_variant(raw):
-    return None if raw is None else VariantBytes(raw)
-
-
-def conv_udt(raw):
-    return None if raw is None else UdtBytes(raw)
-
-
-OUTPUT_CONVERTERS = [(-155, conv_datetimeoffset), (-152, conv_xml), (-151, conv_udt), (-150, conv_variant)]
 
 
 # ============================================================ типы значений и обработка "200"
@@ -975,38 +915,6 @@ def minimal_key(fold, pidx, k, nrows):
     return [i for i in pidx if i in found]
 
 
-# ============================================================ create table
-
-PY_TYPE_KIND = {"str": "str", "int": "int", "bool": "bool", "float": "float", "Decimal": "decimal",
-                "date": "date", "time": "time", "datetime": "datetime", "bytes": "bytes",
-                "bytearray": "bytes", "UUID": "uuid"}
-SIMPLE_SQL_TYPE = {"int": "bigint", "bool": "bit", "float": "float", "date": "date", "time": "time",
-                   "datetime": "datetime2(7)", "datetimeoffset": "datetimeoffset",
-                   "uuid": "uniqueidentifier", "xml": "xml", "sql_variant": "sql_variant",
-                   "udt": "varbinary(max)"}
-
-
-def sql_type(kind, d):
-    type_name, size, prec, scale, null_ok = d
-    if kind is None or kind == "unknown":
-        kind = PY_TYPE_KIND.get(type_name, "str")
-    if kind == "str":
-        t = "nvarchar(max)" if not size or size > 4000 else f"nvarchar({size})"
-    elif kind == "bytes":
-        t = "varbinary(max)" if not size or size > 8000 else f"varbinary({size})"
-    elif kind == "decimal":
-        t = f"decimal({prec if prec and 1 <= prec <= 38 else 38},{scale or 0})"
-    else:
-        t = SIMPLE_SQL_TYPE[kind]
-    return t + (" NULL" if null_ok else " NOT NULL")
-
-
-def create_table(n, names, kinds, dinfo):
-    cols = ", ".join(f"[{escape(name).replace(']', ']]')}] {sql_type(k, d)}"
-                     for name, k, d in zip(names, kinds, dinfo))
-    return f"create table #t{n}({cols})"
-
-
 # ============================================================ этап 2: обработка таблицы (исполнитель)
 
 def worker_init():
@@ -1088,7 +996,7 @@ def process_table(task):
     p_names = [names[i] for i in pidx] + ([DUP_COL] if dup else [])
     result.update({
         "file": task["file"],
-        "create": create_table(task["n"], names, kinds, task["desc"]),
+        "create": task["create"],
         "klen": len(p_names) if dup else k,
         "P": p_names,
     })
@@ -1124,7 +1032,7 @@ def err_text(e):
     return one_line(e) or type(e).__name__
 
 
-def run_mode1(sql_arg, rollback, repeat, profile):
+def run_mode1(sql_arg, rollback, repeat, profile, explain=None):
     t_run = perf()
     sql_path = Path(sql_arg)
     if sql_path.suffix.lower() != SQL_EXT:
@@ -1135,22 +1043,24 @@ def run_mode1(sql_arg, rollback, repeat, profile):
     settings = read_settings()
     if not sql_path.is_file():
         raise ScriptError(f"файл не найден: {sql_arg}")
+    db = get_dialect(settings)
+    if explain is not None:
+        if not db.can_explain:
+            raise ScriptError(f"--explain: только для PostgreSQL (у {db.name} планы из кэша сохраняет --profile)")
+        if explain < 0:
+            raise ScriptError("--explain: МС не может быть отрицательным")
+        profile = True
     sql_text, sha1 = read_sql(sql_path)
-    batches = split_batches(sql_text)
-    conn_str = build_conn_str(settings, APP_NAME)
-    ctl_conn_str = build_conn_str(settings, APP_NAME + " control")
+    batches = db.split_script(sql_text)
+    db.check_script(batches, rollback)
     ignored = ignored_columns(settings["ignored_columns"], sql_path.stem)
     out_dir = Path(OUTPUT_DIR) if OUTPUT_DIR else sql_path.resolve().parent
     out_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        import pyodbc
-    except ImportError:
-        raise ScriptError("не установлен модуль pyodbc: pip install pyodbc")
+    db.driver()
     Journal.on = True
-    run = Mode1Run(pyodbc, sql_path, sha1, batches, conn_str, ctl_conn_str, ignored, out_dir,
-                   rollback, repeat, profile)
+    run = Mode1Run(db, sql_path, sha1, batches, ignored, out_dir, rollback, repeat, profile, explain)
     Events.emit("start", mode="run", sql=str(sql_path.resolve()), repeat=repeat, profile=profile,
-                rollback=rollback, batches=len(batches))
+                rollback=rollback, batches=len(batches), explain=explain)
     return run.execute(t_run)
 
 
@@ -1158,8 +1068,6 @@ def run_mode1(sql_arg, rollback, repeat, profile):
 
 ZERO = (0, 0, 0, 0)
 CTL_ZERO = (0, 0, 0, 0, 0, 0)
-FUNC_TYPES = {"FN", "IF", "TF", "FS", "FT"}   # функции: их выборки относятся к вызывающему оператору
-PLAN_SQL = "SELECT query_plan FROM sys.dm_exec_text_query_plan(?, ?, ?)"
 
 
 def vadd(a, b):
@@ -1187,354 +1095,19 @@ def run_time(c):
     return max(c[4] - c[5], 0)
 
 
-def cost_text(c, client_ok):
-    client = f"ожидание клиента {c[5]} мс" if client_ok else "ожидание клиента нет данных"
-    return (f"время {run_time(c)} мс, {client}, CPU {c[0]} мс, логических чтений {c[1]}, "
-            f"физических чтений {c[2]}")
+NO_DATA = "нет данных"
+
+
+def cost_text(c, absent):
+    """Затраты одной строкой; absent - счетчики, которых у сервера нет ("cpu", "reads", "client")."""
+    def v(name, x, unit=""):
+        return NO_DATA if name in absent else f"{x}{unit}"
+    return (f"время {run_time(c)} мс, ожидание клиента {v('client', c[5], ' мс')}, CPU {v('cpu', c[0], ' мс')}, "
+            f"логических чтений {v('reads', c[1])}, физических чтений {v('reads', c[2])}")
 
 
 class ControlError(Exception):
     """Контрольное подключение не видит рабочую сессию."""
-
-
-class Control:
-    """Контрольное подключение: читает счетчики рабочей сессии и на нее не влияет.
-
-    Счетчики (CTL_ZERO): CPU (мс), логические чтения, физические чтения, записи, часы скрипта (мс),
-    ожидание клиента (мс, ASYNC_NETWORK_IO). Счетчики сессии обновляются в конце батча, поэтому внутри
-    батча значение = счетчики сессии перед батчем + счетчики запроса. Время = часы - ожидание клиента.
-    """
-
-    COUNTERS_SQL = ("SELECT s.cpu_time, s.logical_reads, s.reads, s.writes, "
-                    "r.cpu_time, r.logical_reads, r.reads, r.writes, {client} "
-                    "FROM sys.dm_exec_sessions s "
-                    "LEFT JOIN sys.dm_exec_requests r ON r.session_id = s.session_id "
-                    "WHERE s.session_id = ?")
-    CLIENT_SQL = ("(SELECT SUM(w.wait_time_ms) FROM sys.dm_exec_session_wait_stats w "
-                  "WHERE w.session_id = s.session_id AND w.wait_type = 'ASYNC_NETWORK_IO')")
-    WAIT_STATS_PROBE = "SELECT TOP 0 wait_time_ms FROM sys.dm_exec_session_wait_stats"
-
-    def __init__(self, conn, spid):
-        self.conn, self.spid = conn, spid
-        self.lock = threading.Lock()      # подключение общее с потоком выборки (--profile)
-        self.base = self.last = CTL_ZERO
-        self.req = ZERO
-        try:                              # sys.dm_exec_session_wait_stats есть с SQL Server 2016
-            self.query(self.WAIT_STATS_PROBE)
-            self.client_ok = True
-        except Exception:
-            self.client_ok = False
-        self.sql = self.COUNTERS_SQL.format(client=self.CLIENT_SQL if self.client_ok else "NULL")
-
-    def query(self, sql, *params):
-        return self.timed_query(sql, *params)[0]
-
-    def timed_query(self, sql, *params):
-        """(строки, длительность ответа сервера в мс). Время ожидания подключения, занятого другим
-        потоком (счетчики главного потока), в длительность не входит."""
-        with self.lock:
-            t = perf()
-            cur = self.conn.cursor()
-            try:
-                cur.execute(sql, *params)
-                rows = [tuple(r) for r in cur.fetchall()] if cur.description is not None else []
-            finally:
-                cur.close()
-            return rows, (perf() - t) / 1e6
-
-    def read(self):
-        rows = self.query(self.sql, self.spid)
-        if not rows:
-            raise ControlError("контрольное подключение не видит рабочую сессию, нужно право VIEW SERVER STATE")
-        row = rows[0]
-        return row, (perf() // 1_000_000, int(row[8] or 0))
-
-    def batch_start(self):
-        """Перед батчем рабочая сессия простаивает, ее счетчики полные."""
-        row, stamp = self.read()
-        self.base = self.last = vmax(to_counters(row[:4]) + stamp, self.last)
-        self.req = ZERO
-        return self.last
-
-    def now(self):
-        row, stamp = self.read()
-        if row[4] is not None:
-            self.req = to_counters(row[4:8])
-            v = vadd(self.base[:4], self.req)
-        else:    # запрос уже завершился
-            v = vmax(to_counters(row[:4]), vadd(self.base[:4], self.req))
-        self.last = vmax(v + stamp, self.last)
-        return self.last
-
-
-class Lookup(threading.Thread):
-    """Тексты операторов, имена и типы объектов, планы. Свое подключение и свой поток, чтобы эти
-    запросы (ответ сервера на них бывает долгим) не задерживали выборки. Каждый запрос ставится
-    в очередь один раз; результат появляется в словарях texts, objects, plans (None - получить
-    не удалось). Текст попадает в texts только вместе с объектом: "есть в texts" значит "готов"."""
-
-    TEXT_SQL = "SELECT dbid, objectid, text FROM sys.dm_exec_sql_text(?)"
-    NAME_SQL = "SELECT DB_NAME(?), OBJECT_SCHEMA_NAME(?, ?), OBJECT_NAME(?, ?)"
-    TYPE_SQL = ("SET NOCOUNT ON; DECLARE @sql nvarchar(max) = N'SELECT type FROM ' + QUOTENAME(?) "
-                "+ N'.sys.objects WHERE object_id = @id'; EXEC sp_executesql @sql, N'@id int', @id = ?")
-
-    def __init__(self, conn):
-        super().__init__(daemon=True)
-        self.conn = conn
-        self.texts = {}      # sql_handle -> (dbid, objectid, text) или None
-        self.objects = {}    # (dbid, objectid) -> (имя, тип)
-        self.plans = {}      # (plan_handle, start, end) -> текст плана или None
-        self.asked = set()
-        self.queue = queue.Queue()
-        self.error = None
-        self.start()
-
-    def want_text(self, handle):
-        if handle not in self.asked:
-            self.asked.add(handle)
-            self.queue.put(("text", handle))
-
-    def want_plan(self, key):
-        if key not in self.asked:
-            self.asked.add(key)
-            self.queue.put(("plan", key))
-
-    def busy(self):
-        return self.queue.unfinished_tasks > 0
-
-    def query(self, sql, *params):
-        cur = self.conn.cursor()
-        try:
-            cur.execute(sql, *params)
-            return [tuple(r) for r in cur.fetchall()] if cur.description is not None else []
-        finally:
-            cur.close()
-
-    def run(self):
-        while True:
-            item = self.queue.get()
-            try:
-                if item is None:
-                    return
-                kind, key = item
-                if kind == "text":
-                    self.texts[key] = self.get_text(key)
-                else:
-                    self.plans[key] = self.get_plan(key)
-            finally:
-                self.queue.task_done()
-
-    def get_text(self, handle):
-        try:
-            rows = self.query(self.TEXT_SQL, handle)
-            t = rows[0] if rows else None
-            if t is not None and t[1] is not None and (t[0], t[1]) not in self.objects:
-                self.objects[(t[0], t[1])] = self.object_info(t[0], t[1])
-            return t
-        except Exception as e:
-            self.error = self.error or err_text(e)
-            return None
-
-    def object_info(self, dbid, objid):
-        db, schema, name = self.query(self.NAME_SQL, dbid, objid, dbid, objid, dbid)[0]
-        typ = None
-        if db:
-            try:
-                rows = self.query(self.TYPE_SQL, db, objid)
-                typ = str(rows[0][0]).strip() if rows else None
-            except Exception:
-                pass
-        return (f"{schema}.{name}" if name else f"объект {objid} (база {db or dbid})"), typ
-
-    def get_plan(self, key):
-        try:
-            rows = self.query(PLAN_SQL, *key)
-            return rows[0][0] if rows and rows[0][0] else None
-        except Exception as e:
-            self.error = self.error or err_text(e)
-            return None
-
-    def stop(self):
-        """Останавливает поток и закрывает подключение. Если поток завис в запросе к серверу,
-        подключение остается до выхода из скрипта."""
-        self.queue.put(None)
-        self.join(5)
-        if not self.is_alive():
-            try:
-                self.conn.close()
-            except Exception:
-                pass
-
-
-class Sampler(threading.Thread):
-    """Раз в PROFILE_INTERVAL_MS читает текущий оператор, счетчики и ожидание запроса сессии
-    control.spid и передает выборку в StatsBuilder. --profile: в отдельном потоке (run);
-    --session: опрос вызывается из главного цикла (poll).
-
-    Выборка - два легких запроса по одной сессии: строка ее запроса и проверка, ждет ли кто-то эту
-    сессию. Тексты и объекты получает Lookup в своем потоке; выборки, текст которых еще не готов,
-    ждут в очереди и передаются в StatsBuilder по порядку. Ответ сервера на запрос строки запроса
-    (REQUEST_SQL) дольше SAMPLE_SLOW_MS - задержка: slow - сколько их, slow_ms - их суммарная длительность."""
-
-    REQUEST_SQL = ("SELECT r.request_id, r.start_time, r.sql_handle, r.statement_start_offset, "
-                   "r.statement_end_offset, r.plan_handle, r.cpu_time, r.logical_reads, r.reads, "
-                   "r.total_elapsed_time, r.wait_type, r.last_wait_type, r.status, r.granted_query_memory, "
-                   "SYSDATETIME(), r.blocking_session_id FROM sys.dm_exec_requests r WHERE r.session_id = ?")
-    BLOCKING_SQL = "SELECT TOP 1 1 FROM sys.dm_exec_requests WHERE blocking_session_id = ?"
-
-    def __init__(self, control, lookup, batch_start, sql_name, adhoc_label, on_segment):
-        super().__init__(daemon=True)
-        self.control, self.lookup = control, lookup
-        self.texts, self.objects = lookup.texts, lookup.objects
-        self.stop_event = threading.Event()
-        self.error = None
-        self.ignoring = False            # выполняется батч --ignore in test: выборки не учитываются
-        self.ignored_requests = set()
-        self.waiting = collections.deque()   # выборки (None - запроса нет), ждущие текста
-        self.slow = self.slow_ms = 0
-        self.builder = StatsBuilder(self, batch_start, sql_name, adhoc_label, on_segment)
-        self.on_poll = None              # --profile --events: вызывается после каждой выборки (в потоке)
-        self.event_fields = {}           # --events: общие поля событий (номер прогона)
-
-    def run(self):
-        delay = PROFILE_INTERVAL_MS
-        try:
-            while not self.stop_event.wait(delay / 1000):
-                s, delay = self.poll()
-                if self.on_poll is not None:
-                    self.on_poll(s)
-        except Exception as e:
-            self.error = err_text(e)
-        self.finish()
-
-    def timed_query(self, sql):
-        """Запрос строки запроса сессии: от его ответа зависит точность времени. Вспомогательные запросы
-        (кто ждет сессию; тексты и планы у Lookup) задержками не считаются."""
-        rows, d = self.control.timed_query(sql, self.control.spid)
-        if d > SAMPLE_SLOW_MS:
-            self.slow += 1
-            self.slow_ms += round(d)
-            Events.emit("slow", count=self.slow, ms=self.slow_ms, **self.event_fields)
-        return rows
-
-    def poll(self):
-        """Одна выборка: (выборка или None, если запроса нет; задержка до следующей, мс).
-
-        Выборка: (запрос, sql_handle, start, end, plan_handle, (cpu, logical, physical, elapsed),
-        (wait_type, last_wait_type, status, выделено памяти в страницах, блокирует другие сессии,
-        какую сессию ждет или None), время сервера)."""
-        rows = self.timed_query(self.REQUEST_SQL)
-        if not rows or rows[0][2] is None:
-            self.push(None)
-            return None, PROFILE_INTERVAL_MS
-        r = rows[0]
-        if self.ignoring or (r[0], r[1]) in self.ignored_requests:   # батч --ignore in test
-            self.ignored_requests.add((r[0], r[1]))
-            self.push(None)
-            return None, PROFILE_INTERVAL_MS
-        blocking = 1 if self.control.query(self.BLOCKING_SQL, self.control.spid) else 0
-        handle = bytes(r[2])
-        plan = bytes(r[5]) if r[5] is not None else None
-        # blocking_session_id: 0 - никого не ждет, < 0 - владелец неизвестен; у параллельного плана
-        # (CXPACKET и т. п.) в нем своя же сессия
-        by = r[15]
-        by = int(by) if by and by > 0 and by != self.control.spid else None
-        s = ((r[0], r[1]), handle, r[3] or 0, r[4], plan, to_counters(r[6:10]),
-             tuple(r[10:14]) + (blocking, by), r[14])
-        self.lookup.want_text(handle)
-        self.push(s)
-        # внутри функции или с испорченными границами оператора - следующий опрос сразу
-        again = self.ready(handle) and self.builder.statement(s) is None
-        return s, PROFILE_FAST_MS if again else PROFILE_INTERVAL_MS
-
-    def ready(self, handle):
-        return handle in self.texts
-
-    def now(self, s):
-        """Текущий оператор выборки s (для функции - вызывающий) для строки состояния и событий:
-        {key, label, line, text, wait, blocked_by}; label None - запроса нет; None - текст еще не получен."""
-        if s is None:
-            return {"key": ("нет запроса",), "label": None, "line": 0, "text": "", "wait": "", "blocked_by": None}
-        if not self.ready(s[1]):
-            return None
-        st = self.builder.statement(s) or self.builder.current()
-        if st:
-            key, label, line, text = (s[0], st["key"]), st["label"], st["line"], st["text"]
-        else:   # функция, вызывающий оператор еще не встретился
-            t = self.texts.get(s[1])
-            obj = self.objects.get((t[0], t[1])) if t else None
-            label, line, text = f"{obj[0] if obj else '?'} (функция)", 0, ""
-            key = (s[0], label)
-        return {"key": key, "label": label, "line": line, "text": text,
-                "wait": (s[6][0] or "").strip(), "blocked_by": s[6][5]}
-
-    def push(self, item):
-        self.waiting.append(item)
-        self.drain()
-
-    def drain(self, force=False):
-        """Передает в StatsBuilder выборки, текст которых готов; force - все (без текста будет
-        "(текст недоступен)")."""
-        while self.waiting:
-            item = self.waiting[0]
-            if item is not None and not force and not self.ready(item[1]):
-                return
-            self.waiting.popleft()
-            if item is None:
-                self.builder.idle()
-            else:
-                self.builder.feed(item)
-
-    def finish(self, wait_s=LOOKUP_WAIT_S):
-        """Конец выборок: дождаться текстов (не дольше wait_s) и передать все выборки."""
-        end = perf() + wait_s * 10**9
-        while self.waiting and self.lookup.busy() and perf() < end:
-            time.sleep(0.02)
-        self.drain(force=True)
-        self.builder.idle()
-
-    def stop(self):
-        self.stop_event.set()
-        self.join()
-
-
-STMT_MIN_LEN = 2    # текст оператора не длиннее - границы испорчены, выборка считается как внутри функции
-
-
-def describe(sampler, s, batch_start, sql_name, adhoc_label):
-    """Оператор выборки: словарь с ключом (объект, строка, хэш текста) или None, если это функция
-    или границы оператора испорчены: в sys.dm_exec_requests смещения начала и конца читаются без
-    блокировки и в момент смены оператора бывают несогласованными (конец раньше начала, текст из
-    одной буквы). Такая выборка, как и выборка внутри функции, относится к предыдущему оператору,
-    а следующий опрос идет сразу."""
-    handle, start, end = s[1], s[2], s[3]
-    t = sampler.texts.get(handle)
-    if t is None:
-        label = "(текст недоступен)"
-        return {"key": (label, 0, ""), "label": label, "line": 0, "hash": "", "text": "", "start": start, "end": end}
-    dbid, objid, text = t
-    text = text or ""
-    obj = sampler.objects.get((dbid, objid)) if objid is not None else None
-    if obj is not None and obj[1] in FUNC_TYPES:
-        return None
-    i0 = start // 2
-    i1 = len(text) if end is None or end < 0 else end // 2 + 1
-    stmt = text[i0:i1].strip()
-    if len(stmt) <= STMT_MIN_LEN:
-        return None     # границы оператора испорчены (сервер отдал их в момент смены оператора)
-    line = text.count("\n", 0, i0) + 1
-    if obj is not None:
-        label = obj[0]
-    elif text in batch_start:
-        label, line = sql_name, batch_start[text] + line - 1
-    else:
-        label = adhoc_label
-    h = f"{zlib.crc32(' '.join(stmt.split()).casefold().encode('utf-8', 'surrogatepass')):08x}"
-    return {"key": (label, line, h), "label": label, "line": line, "hash": h, "text": stmt,
-            "start": start, "end": end}
-
-
-WAIT_GROUPS = ("PAGEIOLATCH_", "PAGELATCH_", "LATCH_")   # подтипы (_SH, _EX, ...) объединяются в X_*
 
 
 def new_extra():
@@ -1548,38 +1121,6 @@ def add_extra(a, b):
     a["mem"] = max(a["mem"], b["mem"])
     for k, v in b["waits"].items():
         a["waits"][k] = a["waits"].get(k, 0) + v
-
-
-def wait_name(wait_type, last_wait_type, status):
-    """Тип ожидания выборки: текущий; без него у ожидающего процессор - SOS_SCHEDULER_YIELD;
-    у выполняющегося - последний завершенный."""
-    wt = (wait_type or "").strip()
-    if not wt:
-        wt = "SOS_SCHEDULER_YIELD" if (status or "").strip().lower() == "runnable" else (last_wait_type or "").strip()
-    for g in WAIT_GROUPS:
-        if wt.startswith(g):
-            return g + "*"
-    return wt
-
-
-def interval_extra(d, state):
-    """Ожидания интервала между выборками: время интервала без CPU относится к типу ожидания выборки."""
-    wait_type, last_wait_type, status, mem, blocking = state[:5]
-    ex = new_extra()
-    ex["mem"] = int(mem or 0)
-    if blocking:
-        ex["blocking"] = d[3]
-    w = max(d[3] - d[0], 0)
-    if not w:
-        return ex
-    wt = wait_name(wait_type, last_wait_type, status)
-    if wt == "ASYNC_NETWORK_IO":
-        ex["client"] = w
-    elif wt.startswith("LCK_M_"):
-        ex["locks"] = w
-    else:
-        ex["waits"][wt or "(неизвестно)"] = w
-    return ex
 
 
 def stat_entry(st):
@@ -1624,7 +1165,7 @@ class StatsBuilder:
     def statement(self, s):
         ck = s[1:4]
         if ck not in self.cache:
-            self.cache[ck] = describe(self.sampler, s, self.batch_start, self.sql_name, self.adhoc_label)
+            self.cache[ck] = self.sampler.describe(s, self.batch_start, self.sql_name, self.adhoc_label)
         return self.cache[ck]
 
     def feed(self, s):
@@ -1640,7 +1181,7 @@ class StatsBuilder:
                 # (иначе в первой строке журнала - время от начала запроса).
                 d, t0 = ZERO, s[7]
         self.prev = s
-        ex = interval_extra(d, s[6])
+        ex = self.sampler.interval_extra(d, s[6])
         st = self.statement(s)
         if st is None:
             self.func += 1
@@ -1684,7 +1225,8 @@ class StatsBuilder:
     def summary(self):
         sp = self.sampler
         return {"samples": self.samples, "func": self.func, "lost": self.lost, "error": sp.error,
-                "lookup_error": sp.lookup.error, "slow": sp.slow, "slow_ms": sp.slow_ms}
+                "lookup_error": sp.lookup.error if sp.lookup is not None else None,
+                "slow": sp.slow, "slow_ms": sp.slow_ms}
 
 
 def sampling_lines(slow, slow_ms, lookup_errors, note=""):
@@ -1716,7 +1258,9 @@ class Pass:
         self.aborted = None
         self.control = None
         self.counters_error = None       # почему нет счетчиков сервера
-        self.client_ok = False           # есть ожидание клиента (sys.dm_exec_session_wait_stats)
+        self.absent = {}                 # счетчики, которых у сервера нет: {"cpu"/"reads"/"client": причина}
+        self.counter_notes = []          # пометки диалекта о точности счетчиков (Control.notes)
+        self.extra = None                # --profile: статистика диалекта за прогон (Control.extra)
         self.first = self.mark = None    # счетчики в начале прогона и в конце предыдущей таблицы
         self.total = None                # затраты прогона
         self.table_cost = {}             # n -> затраты с конца предыдущей таблицы
@@ -1728,22 +1272,17 @@ class Pass:
         self.next_live = 0               # --profile --events: когда следующие счетчики из выборки
 
     def query(self):
-        run, pyodbc = self.run, self.run.pyodbc
-        pyodbc.native_uuid = True
+        run, db = self.run, self.run.db
         log(f"Подключение ({'rollback' if run.rollback else 'autocommit'})...")
         t = perf()
         try:
-            conn = pyodbc.connect(run.conn_str, autocommit=not run.rollback)
-        except pyodbc.Error as e:
+            conn = db.open_work(run.rollback)
+        except db.Error as e:
             raise ScriptError(f"ошибка подключения: {err_text(e)}")
         self.connect_ns = perf() - t
         ctl = None
         try:
-            if QUERY_TIMEOUT:
-                conn.timeout = QUERY_TIMEOUT
-            for code, fn in OUTPUT_CONVERTERS:
-                conn.add_output_converter(code, fn)
-            self.server = server_info(conn, pyodbc)
+            self.server = db.server_info(conn)
             cur = conn.cursor()
             ctl = self.open_control(cur)
             try:
@@ -1761,6 +1300,7 @@ class Pass:
                 Stop.set_cancel(None)
                 self.stop_sampler()
         finally:
+            self.control_call("before_close", conn)      # PostgreSQL --rollback: счетчики своей транзакции
             if run.rollback:
                 try:
                     conn.rollback()
@@ -1770,7 +1310,7 @@ class Pass:
                 # прерванный оператор (ошибка, отмена) сервер не откатывает до конца транзакции:
                 # если скрипт сам открыл транзакцию, ее блокировки держались бы до отключения
                 try:
-                    conn.execute("IF @@TRANCOUNT > 0 ROLLBACK")
+                    db.end_transaction(conn)
                 except Exception as e:
                     log(f"Ошибка отката открытой транзакции: {err_text(e)}")
             try:
@@ -1778,6 +1318,9 @@ class Pass:
             except Exception:
                 pass
             if ctl is not None:
+                self.control_call("after_close")         # PostgreSQL без --rollback: общая статистика сервера
+                if self.control is not None:
+                    self.counter_notes, self.extra = self.control.notes(), self.control.extra
                 if self.final and self.stmts is not None:
                     run.fetch_plans(self.control)
                 try:
@@ -1787,15 +1330,16 @@ class Pass:
 
     def open_control(self, cur):
         """Контрольное подключение. Если оно не работает, запуск идет дальше без счетчиков."""
-        pyodbc, ctl = self.run.pyodbc, None
+        db, ctl = self.run.db, None
         try:
-            spid = query_spid(cur)
+            spid = db.session_id(cur)
             Events.emit("spid", spid=spid)
-            ctl = pyodbc.connect(self.run.ctl_conn_str, autocommit=True)
-            self.control = Control(ctl, spid)
-            self.client_ok = self.control.client_ok
+            ctl = db.connect(APP_NAME + " control")
+            self.control = db.Control(ctl, spid)
+            self.absent = self.control.absent
+            self.control.begin(cur, self.run.profile, self.run.rollback, self.run.explain)
             self.control.batch_start()
-        except (pyodbc.Error, ControlError) as e:
+        except (db.Error, ControlError) as e:
             self.counters_error = err_text(e)
             self.control = None
             log(f"Счетчики сервера недоступны: {self.counters_error}")
@@ -1806,14 +1350,16 @@ class Pass:
                     pass
             return None
         if self.run.profile:
+            lookup = None
             try:   # тексты и объекты операторов - на отдельном подключении, чтобы не задерживать выборки
-                lookup = Lookup(pyodbc.connect(self.run.ctl_conn_str, autocommit=True))
-            except pyodbc.Error as e:
+                if db.Lookup is not None:       # у PostgreSQL текст оператора есть в самой выборке
+                    lookup = db.Lookup(db.connect(APP_NAME + " control"))
+            except db.Error as e:
                 log(f"Профилирование недоступно: {err_text(e)}")
                 return ctl
             batch_start = {text: start for start, text in self.run.batches}
-            self.sampler = Sampler(self.control, lookup, batch_start, self.run.sql_path.name,
-                                   "(динамический SQL)", self.segments.append)
+            self.sampler = db.Sampler(self.control, lookup, batch_start, self.run.sql_path.name,
+                                      "(динамический SQL)", self.segments.append)
             self.sampler.event_fields = {"pass": self.k}
             if Events.on:
                 self.sampler.on_poll = self.on_sample
@@ -1831,32 +1377,43 @@ class Pass:
             log(f"Счетчики сервера недоступны: {self.counters_error}")
             return None
 
+    def control_call(self, what, *args):
+        """Действие контрольного подключения в начале или конце прогона (статистика диалекта для --profile).
+        Ошибка не прерывает запуск: она уходит в журнал, у статистики будет пометка диалекта."""
+        if self.control is None:
+            return
+        try:
+            getattr(self.control, what)(*args)
+        except Exception as e:
+            log(f"Ошибка контрольного подключения ({what}): {err_text(e)}")
+
     def emit_counters(self, v):
-        """--events: счетчики прогона на момент v (вектор контрольного подключения)."""
+        """--events: счетчики прогона на момент v (вектор контрольного подключения); нет счетчика - None."""
         if v is None or self.first is None:
             return
         d = vsub(v, self.first)
-        Events.emit("counters", time_ms=run_time(d), cpu_ms=d[0], logical_reads=d[1], physical_reads=d[2],
-                    client_ms=d[5] if self.client_ok else None, **{"pass": self.k})
+        a = self.absent
+        Events.emit("counters", time_ms=run_time(d), cpu_ms=None if "cpu" in a else d[0],
+                    logical_reads=None if "reads" in a else d[1], physical_reads=None if "reads" in a else d[2],
+                    client_ms=None if "client" in a else d[5], **{"pass": self.k})
 
     def on_sample(self, s):
-        """Поток выборки (--profile --events): текущий оператор и раз в секунду счетчики прогона -
-        по формуле Control.now (счетчики сессии перед батчем + счетчики запроса из выборки), без
-        лишних запросов. Ожидание клиента - на момент последнего замера контрольного подключения."""
+        """Поток выборки (--profile --events): текущий оператор и раз в секунду счетчики прогона
+        по выборке (Control.live), без лишних запросов."""
         self.now_events.update(self.sampler.now(s))
         t = perf()
         c = self.control
         if s is None or t < self.next_live or c is None or self.counters_error:
             return
         self.next_live = t + 10**9
-        v = vadd(c.base[:3], s[5][:3]) + (c.base[3], t // 1_000_000, c.last[5])
-        self.emit_counters(vmax(v, c.last))
+        self.emit_counters(c.live(s, t))
 
     def stop_sampler(self):
         if self.sampler is None:
             return
         self.sampler.stop()
-        self.sampler.lookup.stop()
+        if self.sampler.lookup is not None:
+            self.sampler.lookup.stop()
         if self.sampler.error:
             log(f"Профилирование остановлено: {self.sampler.error}")
         self.stmts, self.prof = self.sampler.builder.stats, self.sampler.builder.summary()
@@ -1867,7 +1424,8 @@ class Pass:
             Stop.check()
             ignored = is_ignored_batch(batch)
             log(f"Батч {k} из {len(batches)}{' (--ignore in test)' if ignored else ''}...")
-            Events.emit("batch", k=k, of=len(batches), ignored=ignored, line=batches[k - 1][0], **{"pass": self.k})
+            Events.emit("batch", k=k, of=len(batches), ignored=ignored, line=batches[k - 1][0], text=event_text(batch),
+                        **{"pass": self.k})
             start = self.measure("batch_start")
             if self.first is None:
                 self.first = self.mark = start
@@ -1946,7 +1504,9 @@ class Pass:
         self.messages.extend((label, text) for text in msgs[start:])
         self.last_msgs = msgs
         for kind, text in raw[start:]:
-            show_message(kind, text, **{"pass": self.k})
+            shown = self.run.db.message(kind, text)
+            if shown is not None:
+                show_message(*shown, **{"pass": self.k})
 
     def receive_table(self, cur):
         """Этап 1: прием таблицы во временный файл; затем постановка в очередь исполнителю."""
@@ -1956,7 +1516,7 @@ class Pass:
         self.partial = n
         desc = cur.description
         names = make_names(desc)
-        dinfo = [(getattr(d[1], "__name__", str(d[1])), d[3], d[4], d[5], bool(d[6])) for d in desc]
+        dinfo = run.db.column_info(desc)
         ncols = len(desc)
         kinds = [None] * ncols
         checks = [None] * ncols
@@ -2009,8 +1569,8 @@ class Pass:
             out = unique_path(run.data_dir / f"{run.run_id()}_{n}{DATA_EXT}")
             rel = f"{run.data_dir.name}/{out.name}"
             out = str(out)
-        task = {"n": n, "temp": tmp, "out": out, "file": rel, "names": names, "kinds": kinds, "desc": dinfo,
-                "ignored": ignored_for_table(run.ignored, n)}
+        task = {"n": n, "temp": tmp, "out": out, "file": rel, "names": names, "kinds": kinds,
+                "create": run.db.create_table(n, names, kinds, dinfo), "ignored": ignored_for_table(run.ignored, n)}
         self.futures.append((n, run.executor.submit(process_table, task)))
         self.perf_lines.append(f"  таблица {n}: получение {ms(fetch_ns)} мс "
                                f"(вызовов fetchmany: {calls}), строк: {rows}")
@@ -2056,13 +1616,14 @@ def with_time(e):
     return dict(e, time=max(e["cost"][3] - e["extra"]["client"], 0))
 
 
-def registry_values(r, base):
+def registry_values(r, base, blank=()):
     """Значения оператора для таблицы реестра и комментария в NNN.sql: {колонка: текст}.
-    base - время, от которого считается доля; None - доля не показывается (журнал)."""
+    base - время, от которого считается доля; None - доля не показывается (журнал).
+    blank - колонки, которых у СУБД нет: пусто (не 0, чтобы сравнение не показывало "было 0")."""
     c, ex = r["cost"], r["extra"]
     top = sorted(ex["waits"].items(), key=lambda x: (-x[1], x[0]))[:3]
     places = [f"{t} ({w} мс)" for t, w in top] + [""] * (3 - len(top))
-    return {
+    v = {
         "Время мс": str(r["time"]),
         "Время %": "" if base is None else f"{100 * r['time'] / base:.1f}" if base else "0.0",
         "CPU мс": str(c[0]),
@@ -2079,6 +1640,9 @@ def registry_values(r, base):
         "Выборок": str(r["samples"]),
         "Запусков": str(r.get("runs", "")),
     }
+    for k in blank:
+        v[k] = ""
+    return v
 
 
 def csv_line(cells, text):
@@ -2096,7 +1660,7 @@ def head_cell(text):
     return s
 
 
-def registry_files(rows, base):
+def registry_files(rows, base, blank=(), plan_ext=".sqlplan"):
     """registry.csv, тексты и планы операторов: {имя файла: (идентификатор, текст)}.
     Имена файлов оператора: "NNN - <время мс>.sql" и ".sqlplan". Идентификатор связывает файл
     с оператором, чтобы при сдвиге номера файл переименовывался, а не писался заново.
@@ -2105,7 +1669,7 @@ def registry_files(rows, base):
     lines = [DELIM.join(REGISTRY_COLUMNS)]
     for i, r in enumerate(rows, 1):
         name = f"{i:03d} - {r['time']}"
-        v = registry_values(r, base)
+        v = registry_values(r, base, blank)
         sql = f"{name}.sql"
         files[sql] = (("sql", r["key"]),
                       f"-- {r['label']}, строка {r['line']}\n--"
@@ -2113,7 +1677,7 @@ def registry_files(rows, base):
                       + f"\n{r['text']}\n")
         plan = ""
         if r.get("plan"):
-            plan = f"{name}.sqlplan"
+            plan = f"{name}{plan_ext}"
             files[plan] = (("plan", r["key"]), r["plan"])
         lines.append(csv_line([str(i)] + list(v.values()) + [r["label"], str(r["line"]), r["hash"], sql, plan],
                               r["text"]))
@@ -2121,11 +1685,11 @@ def registry_files(rows, base):
     return files
 
 
-def log_line(seg):
+def log_line(seg, blank=()):
     """Строка журнала: отрезок выполнения оператора, первая колонка - время сервера начала."""
     r = with_time(seg)
     t = seg["start_time"]
-    v = registry_values(r, None)
+    v = registry_values(r, None, blank)
     v["Время сервера"] = t.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if isinstance(t, dt.datetime) else str(t or "")
     v["Объект"], v["Строка"] = r["label"], str(r["line"])
     return csv_line([v[c] for c in LOG_COLUMNS[:-1]], r["text"])
@@ -2197,18 +1761,18 @@ class RegistryFolder:
 class LogWriter:
     """log.csv: строки только дописываются. Если файл занят, строки ждут следующей записи."""
 
-    def __init__(self, path, warn=log):
-        self.path, self.warn = path, warn
+    def __init__(self, path, warn=log, blank=()):
+        self.path, self.warn, self.blank = path, warn, blank
         self.pending = [DELIM.join(LOG_COLUMNS)]
         self.busy = False
         self.write()
 
     def add(self, seg):
-        self.pending.append(log_line(seg))
+        self.pending.append(log_line(seg, self.blank))
         self.write()
 
     def add_many(self, segs):
-        self.pending += [log_line(s) for s in segs]
+        self.pending += [log_line(s, self.blank) for s in segs]
         self.write()
 
     def write(self):
@@ -2227,20 +1791,19 @@ class LogWriter:
 
 
 class Mode1Run:
-    def __init__(self, pyodbc, sql_path, sha1, batches, conn_str, ctl_conn_str, ignored, out_dir,
-                 rollback, repeat, profile):
-        self.pyodbc = pyodbc
+    def __init__(self, db, sql_path, sha1, batches, ignored, out_dir, rollback, repeat, profile, explain=None):
+        self.db = db                     # диалект СУБД (cq_mssql.MSSQL)
         self.sql_path = sql_path
         self.sha1 = sha1
         self.batches = batches           # [(первая строка в файле, текст)]
-        self.conn_str = conn_str
-        self.ctl_conn_str = ctl_conn_str
         self.ignored = ignored
         self.out_dir = out_dir
         self.data_dir = out_dir / sql_path.stem   # файлы данных и папки реестра; отчет остается в out_dir
         self.rollback = rollback
         self.repeat = repeat
         self.profile = profile
+        self.explain = explain               # --explain: порог планов, мс, или None
+        self.explain_plans, self.explain_lines, self.explain_note = {}, [], None
         self.started = dt.datetime.now()     # часы компьютера: только для пометки о расхождении с сервером
         self.t_start = perf()
         self.name = None                     # run_id()
@@ -2272,6 +1835,10 @@ class Mode1Run:
                 self.executor.shutdown(wait=True)
             for p in self.temps:
                 remove_quiet(p)
+        if self.explain is not None and not self.passes[-1].aborted:
+            # планы: auto_explain уже дал их в прогонах или отдельный прогон EXPLAIN ANALYZE (PostgreSQL)
+            self.explain_plans, self.explain_lines, self.explain_note = self.db.explain_pass(
+                self.batches, [p.extra for p in self.measured()], self.rollback, self.explain)
         registry = self.write_registry() if self.profile else None
         journal = self.write_journal()
         text, console = self.report(t_run, registry, journal)
@@ -2344,8 +1911,7 @@ class Mode1Run:
                 continue
             end = row["end"] if row["end"] is not None else -1
             try:
-                rows = control.query(PLAN_SQL, row["plan_handle"], row["start"], end)
-                row["plan"] = rows[0][0] if rows and rows[0][0] else None
+                row["plan"] = self.db.plan(control.query, row["plan_handle"], row["start"], end)
             except Exception as e:
                 log(f"План не получен ({row['label']}, строка {row['line']}): {err_text(e)}")
 
@@ -2371,17 +1937,28 @@ class Mode1Run:
         lines.append(f"Выборок: {samples}, из них внутри функций: {func} (отнесены к вызывающим операторам)")
         lines.append(f"Время по выборкам: {sampled} мс"
                      + (f" из {run_time(total)} мс по счетчикам сессии" if total else ""))
-        lines.append("Время: без ожидания клиента (ASYNC_NETWORK_IO: передача результатов и работа скрипта)")
+        lines += self.db.registry_notes
         for e in sorted({x["error"] for x in profs if x["error"]}):
             lines.append(f"Ошибка профилирования: {e}")
         note = f" (сумма по прогонам {self.measured()[0].k}-{self.measured()[-1].k})" if len(profs) > 1 else ""
         lines += sampling_lines(sum(x["slow"] for x in profs), sum(x["slow_ms"] for x in profs),
                                 [x["lookup_error"] for x in profs if x["lookup_error"]], note)
         lines.append(f"Таблица операторов: {REGISTRY_TABLE}, журнал выполнения: {REGISTRY_LOG}")
-        files = registry_files(rows, base)
+        lines += self.explain_lines
+        for r in rows[:PROFILE_PLAN_TOP]:       # планы отдельного прогона EXPLAIN ANALYZE - по строке оператора
+            if not r.get("plan") and r["label"] == self.sql_path.name:
+                r["plan"] = self.explain_plans.get(r["line"])
+        blank = set(self.db.registry_blank)          # колонки, которых у СУБД нет: пусто, а не 0
+        if "reads" in self.passes[-1].absent:
+            blank |= {"Логических чтений", "Физических чтений"}
+            lines.append(f"Чтения: {NO_DATA} ({self.passes[-1].absent['reads']})")
+        files = registry_files(rows, base, blank, self.db.plan_ext)
+        extra, extra_lines = self.db.registry_extra([p.extra for p in self.measured()], len(self.measured()) > 1)
+        files.update(extra)
+        lines += extra_lines
         files[REGISTRY_FILE] = (REGISTRY_FILE, "\n".join(lines) + "\n")
         RegistryFolder(folder).sync(files)
-        LogWriter(folder / REGISTRY_LOG).add_many([seg for p in self.measured() for seg in p.segments])
+        LogWriter(folder / REGISTRY_LOG, blank=blank).add_many([seg for p in self.measured() for seg in p.segments])
         log(f"Реестр операторов: {folder / 'registry.txt'}")
         return f"{self.data_dir.name}/{folder.name}/registry.txt"
 
@@ -2426,6 +2003,8 @@ class Mode1Run:
             lines.append("Игнорируемые батчи (--ignore in test): " + ", ".join(ignored))
         if registry:
             lines.append(f"Реестр: {registry}")
+        if self.explain_note:
+            lines.append(f"Планы (--explain): {self.explain_note}")
         if journal:
             lines.append(f"Журнал: {journal}")
         if last.aborted:
@@ -2439,7 +2018,7 @@ class Mode1Run:
         for n in sorted(last.results):
             cost = self.median_cost(lambda p, n=n: p.table_cost.get(n))
             lines.append("")
-            lines.extend(table_block(n, last.results[n], cost, last.client_ok))
+            lines.extend(table_block(n, last.results[n], cost, last.absent))
         tail = []
         if self.repeat == 2 and len(self.passes) == 2 and not last.aborted:
             tail = [""] + self.ignore_suggestion()
@@ -2476,15 +2055,16 @@ class Mode1Run:
         lines = ["# Сводка"]
         total = self.median_cost(lambda p: p.total)
         if total:
+            a = last.absent
+
+            def v(name, x, unit=""):
+                return f"{NO_DATA} ({a[name]})" if name in a else f"{x}{unit}"
             lines.append(f"Время: {run_time(total)} мс")
-            if last.client_ok:
-                lines.append(f"Ожидание клиента: {total[5]} мс (передача результатов и работа скрипта, "
-                             f"во время не входит)")
-            else:
-                lines.append("Ожидание клиента: нет данных (нет sys.dm_exec_session_wait_stats, "
-                             "SQL Server до 2016), время его включает")
-            lines += [f"CPU: {total[0]} мс", f"Логических чтений: {total[1]}",
-                      f"Физических чтений: {total[2]}", f"Записей: {total[3]}"]
+            lines.append("Ожидание клиента: " + (v("client", 0) if "client" in a else
+                         f"{total[5]} мс (передача результатов и работа скрипта, во время не входит)"))
+            lines += [f"CPU: {v('cpu', total[0], ' мс')}", f"Логических чтений: {v('reads', total[1])}",
+                      f"Физических чтений: {v('reads', total[2])}", f"Записей: {v('reads', total[3])}"]
+            lines += sorted({x for p in self.measured() for x in p.counter_notes})
         else:
             reason = next((p.counters_error for p in self.passes if p.counters_error), None)
             lines.append("Счетчики сервера: нет данных" + (f" ({reason})" if reason else ""))
@@ -2535,18 +2115,7 @@ class Mode1Run:
         return lines
 
 
-def server_info(conn, pyodbc):
-    info = {}
-    for key, attr in (("server", "SQL_SERVER_NAME"), ("database", "SQL_DATABASE_NAME"),
-                      ("dbms", "SQL_DBMS_NAME"), ("version", "SQL_DBMS_VER")):
-        try:
-            info[key] = conn.getinfo(getattr(pyodbc, attr))
-        except Exception:
-            pass
-    return info
-
-
-def table_block(n, res, cost, client_ok):
+def table_block(n, res, cost, absent):
     if isinstance(res, BaseException):
         return [f"# Таблица {n}", f"ОШИБКА ОБРАБОТКИ: {one_line(res)}"]
     lines = [f"# Таблица {n}"]
@@ -2554,7 +2123,7 @@ def table_block(n, res, cost, client_ok):
         lines.append(f"Файл: {res['file']}")
     lines.append(f"Количество строк: {res['rows']}")
     if cost:
-        lines.append(f"Затраты до таблицы: {cost_text(cost, client_ok)}")
+        lines.append(f"Затраты до таблицы: {cost_text(cost, absent)}")
     lines.append(f"Хэш таблицы: {res['table_hash']}")
     if "file" not in res:      # прерванный промежуточный прогон: данные не сохранялись
         return lines
@@ -2602,12 +2171,8 @@ class SessionMonitor:
     """Наблюдение за сессией spid: то же, что --profile, но для чужой сессии и с записью на диск
     раз в SESSION_FLUSH_S секунд. log.csv дописывается сразу, как закончился отрезок выполнения."""
 
-    SESSION_SQL = ("SELECT login_time, host_name, program_name, login_name "
-                   "FROM sys.dm_exec_sessions WHERE session_id = ?")
-    INPUT_SQL = "SELECT event_info FROM sys.dm_exec_input_buffer(?, NULL)"
-
-    def __init__(self, control, lookup, spid, info, folder):
-        self.input_mode = "dmf"   # исходный запрос: dmf, dbcc (до SQL Server 2014 SP2) или None (недоступен)
+    def __init__(self, db, control, lookup, spid, info, folder):
+        self.db = db
         self.input_text = None
         self.control, self.spid, self.folder = control, spid, folder
         self.status_key = None   # что показывает текущая строка состояния
@@ -2618,10 +2183,13 @@ class SessionMonitor:
                      f"программа: {info[2] or '?'}; подключена: {info[0]}")
         self.started = ServerTime.now()
         self.state = "идет наблюдение"
+        self.blank = set(db.registry_blank)          # колонки, которых у СУБД нет: пусто, а не 0
+        if "reads" in control.absent:
+            self.blank |= {"Логических чтений", "Физических чтений"}
         self.files = RegistryFolder(folder, self.warn)
-        self.log_file = LogWriter(folder / REGISTRY_LOG, self.warn)
+        self.log_file = LogWriter(folder / REGISTRY_LOG, self.warn, self.blank)
         self.lookup = lookup
-        self.sampler = Sampler(control, lookup, {}, None, "(батч)", self.log_file.add)
+        self.sampler = db.Sampler(control, lookup, {}, None, "(батч)", self.log_file.add)
         self.builder = self.sampler.builder
         self.builder.since = self.started
         self.now_events = NowEvents()
@@ -2637,25 +2205,16 @@ class SessionMonitor:
             self.status_key = self.status_shown = None
 
     def alive(self):
-        rows = self.control.query(self.SESSION_SQL, self.spid)
-        return bool(rows) and rows[0][0] == self.login_time
+        row = self.db.session_row(self.control.query, self.spid)
+        return row is not None and row[0] == self.login_time
 
     def input_buffer(self):
-        """Исходный запрос сессии - последний батч, который прислал клиент (часто вызов процедуры
-        с параметрами), одной строкой; None - получить не удалось. Один вызов по одной сессии, при
-        каждой записи файлов. sys.dm_exec_input_buffer есть с SQL Server 2014 SP2, до него - DBCC INPUTBUFFER."""
-        while self.input_mode:
-            try:
-                if self.input_mode == "dmf":
-                    rows = self.control.query(self.INPUT_SQL, self.spid)
-                else:
-                    rows = [[r[2]] for r in self.control.query(f"DBCC INPUTBUFFER({int(self.spid)}) WITH NO_INFOMSGS")]
-                break
-            except Exception:
-                self.input_mode = "dbcc" if self.input_mode == "dmf" else None
-        else:
+        """Исходный запрос сессии (что прислал клиент, часто вызов процедуры с параметрами) одной строкой;
+        None - получить не удалось. Один вызов по одной сессии, при каждой записи файлов."""
+        text = self.db.input_buffer(self.control.query, self.spid)
+        if text is None:
             return None
-        text = " ".join((rows[0][0] or "").replace("\x00", "").split()) if rows else ""
+        text = " ".join(text.split())
         return text[:SESSION_INPUT_LEN] + ("..." if len(text) > SESSION_INPUT_LEN else "")
 
     def status(self, s):
@@ -2686,13 +2245,14 @@ class SessionMonitor:
         (их получает поток Lookup, в файлы они попадут при одной из следующих записей)."""
         rows = sorted((with_time(e) for e in self.builder.stats.values()),
                       key=lambda r: (-r["time"], -r["cost"][0], r["label"], r["line"]))
-        if fetch_plans:
-            for r in rows[:PROFILE_PLAN_TOP]:
-                k = self.plan_key(r)
-                if k[0]:
-                    self.lookup.want_plan(k)
-        for r in rows:
-            r["plan"] = self.lookup.plans.get(self.plan_key(r))
+        if self.lookup is not None:      # у PostgreSQL планов чужой сессии нет
+            if fetch_plans:
+                for r in rows[:PROFILE_PLAN_TOP]:
+                    k = self.plan_key(r)
+                    if k[0]:
+                        self.lookup.want_plan(k)
+            for r in rows:
+                r["plan"] = self.lookup.plans.get(self.plan_key(r))
         sampled = sum(r["time"] for r in rows)
         s = self.builder.summary()
         if not final:      # финальная запись - без запросов к серверу; пусто - остается прежний
@@ -2705,11 +2265,14 @@ class SessionMonitor:
                  f"Состояние: {self.state}",
                  f"Интервал выборки: {PROFILE_INTERVAL_MS} мс, файлы обновляются раз в {SESSION_FLUSH_S} с",
                  f"Выборок: {s['samples']}, из них внутри функций: {s['func']} (отнесены к вызывающим операторам)",
-                 f"Время по выборкам: {sampled} мс",
-                 "Время: без ожидания клиента (ASYNC_NETWORK_IO: передача результатов и обработка на клиенте)"]
+                 f"Время по выборкам: {sampled} мс"]
+        lines += self.db.session_notes
+        if "reads" in self.control.absent:
+            lines.append(f"Чтения: {NO_DATA} ({self.control.absent['reads']})")
+        lines += self.control.notes()
         lines += sampling_lines(s["slow"], s["slow_ms"], [s["lookup_error"]] if s["lookup_error"] else [])
         lines.append(f"Таблица операторов: {REGISTRY_TABLE}, журнал выполнения: {REGISTRY_LOG}")
-        files = registry_files(rows, sampled)
+        files = registry_files(rows, sampled, self.blank, self.db.plan_ext)
         files[REGISTRY_FILE] = (REGISTRY_FILE, "\n".join(lines) + "\n")
         self.files.sync(files)
         self.log_file.write()    # строки, которые не удалось дописать раньше
@@ -2768,37 +2331,31 @@ def run_session(spid):
     if ensure_settings_file():
         log("Заполните настройки подключения и запустите скрипт снова.")
         return 2
-    settings = read_settings()
-    conn_str = build_conn_str(settings, APP_NAME + " session")
-    try:
-        import pyodbc
-    except ImportError:
-        raise ScriptError("не установлен модуль pyodbc: pip install pyodbc")
-    try:
-        conn = pyodbc.connect(conn_str, autocommit=True)
-    except pyodbc.Error as e:
-        raise ScriptError(f"ошибка подключения: {err_text(e)}")
+    db = get_dialect(read_settings())
+    if db.no_session:
+        raise ScriptError(f"--session: {db.no_session}")
+    conn = db_connect(db, APP_NAME + " session")
     try:
         cur = conn.cursor()
-        own = query_spid(cur)
+        own = db.session_id(cur)
         cur.close()
         if own == spid:
             raise ScriptError(f"сессия {spid} - это подключение самого скрипта")
-        control = Control(conn, spid)
-        rows = control.query(SessionMonitor.SESSION_SQL, spid)
-        if not rows:
+        control = db.SessionControl(conn, spid)
+        row = db.session_row(control.query, spid)
+        if row is None:
             raise ScriptError(f"сессия {spid} не найдена (или нет права VIEW SERVER STATE)")
-        try:   # тексты, объекты и планы - на втором подключении, чтобы не задерживать выборки
-            lookup = Lookup(pyodbc.connect(conn_str, autocommit=True))
-        except pyodbc.Error as e:
-            raise ScriptError(f"ошибка подключения: {err_text(e)}")
+        # тексты, объекты и планы - на втором подключении, чтобы не задерживать выборки (у PostgreSQL
+        # текст оператора есть в самой выборке, второго подключения нет)
+        lookup = db.Lookup(db_connect(db, APP_NAME + " session")) if db.Lookup is not None else None
         out_dir = (Path(OUTPUT_DIR) if OUTPUT_DIR else Path.cwd()) / SESSIONS_DIR
         folder = unique_path(out_dir / f"Session_{ServerTime.now().strftime(DT_FORMAT)}_{spid}")
         folder.mkdir(parents=True)
         try:
-            return SessionMonitor(control, lookup, spid, rows[0], folder).run()
+            return SessionMonitor(db, control, lookup, spid, row, folder).run()
         finally:
-            lookup.stop()
+            if lookup is not None:
+                lookup.stop()
     finally:
         try:
             conn.close()
@@ -2851,9 +2408,8 @@ def parse_report(path, label):
             tables[n] = parse_table(path, n, lines)
         elif title == "Сводка":
             f = fields(lines)
-            cpu, reads = int_value(f.get("CPU")), int_value(f.get("Логических чтений"))
-            if cpu is not None and reads is not None:
-                total = (int_value(f.get("Время")), cpu, reads)
+            if "CPU" in f:       # счетчики есть (отдельного счетчика может не быть: "нет данных" - None)
+                total = (int_value(f.get("Время")), int_value(f["CPU"]), int_value(f.get("Логических чтений")))
     return {"path": path, "dir": path.resolve().parent, "label": label, "run": run,
             "tables": tables, "total": total}
 
@@ -2863,19 +2419,20 @@ def int_value(s):
     return int(m.group(1)) if m else None
 
 
-COST_RE = re.compile(r"(?:время (\d+) мс, ожидание клиента [^,]+, )?CPU (\d+) мс, логических чтений (\d+)")
+COST_RE = re.compile(r"(?:время (\d+) мс, ожидание клиента [^,]+, )?CPU (?:(\d+) мс|нет данных), "
+                     r"логических чтений (?:(\d+)|нет данных)")
 
 
 def parse_cost(s):
-    """(время или None в старых отчетах, CPU, логические чтения) или None."""
+    """(время, CPU, логические чтения) или None; нет счетчика (или времени в старых отчетах) - None."""
     m = COST_RE.match(s or "")
     if not m:
         return None
-    return (int(m.group(1)) if m.group(1) else None, int(m.group(2)), int(m.group(3)))
+    return tuple(int(x) if x else None for x in m.groups())
 
 
 def parse_table(path, n, lines):
-    create = next((line for line in lines if line.lower().startswith("create table")), None)
+    create = next((line for line in lines if line.lower().startswith(("create table", "create temp table"))), None)
     f = fields(lines)
     where = f"{path.name}, таблица {n}"
     try:
@@ -2905,27 +2462,34 @@ def parse_table(path, n, lines):
 
 
 CREATE_COL_RE = re.compile(
-    r"\[((?:[^\]]|\]\])*)\]\s+([A-Za-z_][A-Za-z0-9_]*(?:\s*\([^)]*\))?)(\s+NOT\s+NULL|\s+NULL)?", re.I)
+    r"(?:\[((?:[^\]]|\]\])*)\]|\"((?:[^\"]|\"\")*)\")\s+"
+    # тип: имя или имя в кавычках, у PostgreSQL - и со схемой (свои типы вне search_path: s.mood, "Mood")
+    r"((?:\"(?:[^\"]|\"\")*\"\.|[A-Za-z_][A-Za-z0-9_$]*\.)?(?:\"(?:[^\"]|\"\")*\"|[A-Za-z_][A-Za-z0-9_$]*)"
+    r"(?:\s*\([^)]*\))?(?:\[\])*)"
+    r"(\s+NOT\s+NULL|\s+NULL)?", re.I)
 
 
 def parse_create(line):
     """Толерантный разбор create table: {имя в нижнем регистре: 'тип NULL'} или None."""
     if not line:
         return None
-    m = re.match(r"\s*create\s+table\s+\S+?\s*\((.*)\)\s*$", line, re.I)
+    m = re.match(r"\s*create\s+(?:temp\s+)?table\s+\S+?\s*\((.*)\)\s*$", line, re.I)
     if not m:
         return None
     types = {}
-    for name, typ, null in CREATE_COL_RE.findall(m.group(1)):
-        types[name.replace("]]", "]").lower()] = re.sub(r"\s+", " ", (typ + null).strip()).lower()
+    for bracket, quoted, typ, null in CREATE_COL_RE.findall(m.group(1)):
+        name = bracket.replace("]]", "]") if bracket else quoted.replace('""', '"')
+        types[name.lower()] = re.sub(r"\s+", " ", (typ + null).strip()).lower()
     return types or None
 
 
 TYPE_FAMILY = {}
-for _family, _types in (("число", "bit tinyint smallint int bigint decimal numeric float real money smallmoney"),
-                        ("строка", "char varchar nchar nvarchar text ntext"),
-                        ("дата", "date time datetime datetime2 smalldatetime datetimeoffset"),
-                        ("байты", "binary varbinary image")):
+for _family, _types in (("число", "bit tinyint smallint int bigint decimal numeric float real money smallmoney "
+                                  "int2 int4 int8 float4 float8 bool oid"),
+                        ("строка", "char varchar nchar nvarchar text ntext bpchar name"),
+                        ("дата", "date time datetime datetime2 smalldatetime datetimeoffset timestamp timestamptz"),
+                        ("байты", "binary varbinary image bytea"),
+                        ("uuid", "uniqueidentifier uuid")):
     for _t in _types.split():
         TYPE_FAMILY[_t] = _family
 
@@ -3054,7 +2618,8 @@ class Merger:
     Игнорируемые колонки не сравниваются.
     """
 
-    def __init__(self, names, key_a, key_b, m, common, float_idx, ign_idx):
+    def __init__(self, names, key_a, key_b, m, common, float_idx, ign_idx, limit=EXAMPLE_ROWS):
+        self.limit = limit if limit is not None else 1 << 62       # None - все отличающиеся строки
         self.names = names
         self.ncols = len(names)
         if m is None:
@@ -3074,7 +2639,7 @@ class Merger:
         self.dup_rows = {"A": 0, "B": 0}
         self.ex_diff = None
         self.ex_only = {"A": None, "B": None}
-        # примеры для GUI в порядке ключа, не больше EXAMPLE_ROWS каждого вида:
+        # примеры для GUI в порядке ключа, не больше limit каждого вида:
         # {"kind": "diff", "a": ячейки, "b": ячейки, "cols": индексы отличий} или {"kind": "A"/"B", "row": ячейки}
         self.examples = []
         self.ex_count = {"diff": 0, "A": 0, "B": 0}
@@ -3132,7 +2697,7 @@ class Merger:
         self.diff_rows += 1
         for j in diffs:
             self.col_diffs[j] += 1
-        if self.ex_count["diff"] < EXAMPLE_ROWS:
+        if self.ex_count["diff"] < self.limit:
             self.ex_count["diff"] += 1
             self.examples.append({"kind": "diff", "a": list(ra[0]), "b": list(rb[0]), "cols": diffs})
         if self.ex_diff is None:
@@ -3143,9 +2708,9 @@ class Merger:
         if not rows:
             return
         self.only[side] += len(rows)
-        for r in rows[:EXAMPLE_ROWS - self.ex_count[side]]:
+        for r in rows[:self.limit - self.ex_count[side]]:
             self.examples.append({"kind": side, "row": list(r[0])})
-        self.ex_count[side] = min(EXAMPLE_ROWS, self.ex_count[side] + len(rows))
+        self.ex_count[side] = min(self.limit, self.ex_count[side] + len(rows))
         if self.ex_only[side] is None:
             r = rows[0]
             self.ex_only[side] = (self.key_text(r),
@@ -3183,9 +2748,10 @@ class Merger:
         return bool(self.only["A"] or self.only["B"] or self.diff_rows)
 
 
-def compare_rows(ra, rb, ta, tb, m, float_cols, ignored, hash_diff, hashes_equal):
+def compare_rows(ra, rb, ta, tb, m, float_cols, ignored, hash_diff, hashes_equal, limit=EXAMPLE_ROWS):
     """Сравнение строк: потоком или, если m = None, в памяти.
-    Возвращает (строки отчета парами, отличается, ошибка, примеры строк - см. Merger.examples)."""
+    Возвращает (строки отчета парами, отличается, ошибка, примеры строк - см. Merger.examples; limit - сколько
+    примеров каждого вида, None - все отличающиеся строки)."""
     fa = fb = None
     try:
         fa, err_a = open_data(ra, ta)
@@ -3210,7 +2776,7 @@ def compare_rows(ra, rb, ta, tb, m, float_cols, ignored, hash_diff, hashes_equal
             side_a.sort(key=lambda r: tuple(r[1][i] for i in common))
             side_b.sort(key=lambda r: tuple(r[1][i] for i in common))
             lines.append(both("Сопоставление в памяти по (" + ", ".join(names[i] for i in common) + ")"))
-        mg = Merger(names, key_a, key_b, m, common, float_idx, ign_idx)
+        mg = Merger(names, key_a, key_b, m, common, float_idx, ign_idx, limit)
         mg.run(side_a, side_b)
         return lines + mg.lines(hash_diff), mg.differs(), False, mg.examples
     except (DataError, OSError, UnicodeDecodeError) as e:
@@ -3241,17 +2807,18 @@ def cost_line(label, a, b):
         return None
     if a is None or b is None:
         return f"{label}: нет данных в {'A' if a is None else 'B'}"
-    if a[0] is None or b[0] is None:
-        t = f"время нет данных в {'A' if a[0] is None else 'B'}"
-    else:
-        t = f"время A={a[0]} B={b[0]} мс ({pct_text(a[0], b[0])})"
-    return (f"{label}: {t}, CPU A={a[1]} B={b[1]} мс ({pct_text(a[1], b[1])}), "
-            f"чтений A={a[2]} B={b[2]} ({pct_text(a[2], b[2])})")
+
+    def part(name, i, unit):
+        if a[i] is None or b[i] is None:
+            where = "A и B" if a[i] is None and b[i] is None else "A" if a[i] is None else "B"
+            return f"{name} нет данных в {where}"
+        return f"{name} A={a[i]} B={b[i]}{unit} ({pct_text(a[i], b[i])})"
+    return f"{label}: {part('время', 0, ' мс')}, {part('CPU', 1, ' мс')}, {part('чтений', 2, '')}"
 
 
-def compare_table(n, ra, rb):
+def compare_table(n, ra, rb, limit=EXAMPLE_ROWS):
     """Сравнение одной таблицы. Возвращает (строки отчета парами, отличается, ошибка, примеры строк -
-    см. Merger.examples; пусто, если строки не сравнивались)."""
+    см. Merger.examples, не больше limit каждого вида (None - все); пусто, если строки не сравнивались)."""
     ta, tb = ra["tables"][n], rb["tables"][n]
     body, error, examples = [], False, []
     na, nb = ta["names"], tb["names"]
@@ -3334,7 +2901,7 @@ def compare_table(n, ra, rb):
     elif hashes_equal and not (FLOAT_TOLERANCE > 0 and float_cols):
         body.append(("Хэши таблицы и колонок совпадают, данные не читались", None))
     else:
-        lines, d, error, examples = compare_rows(ra, rb, ta, tb, m, float_cols, ignored, hash_diff, hashes_equal)
+        lines, d, error, examples = compare_rows(ra, rb, ta, tb, m, float_cols, ignored, hash_diff, hashes_equal, limit)
         body.extend(lines)
         differs = differs or d
     return body, differs, error, examples
@@ -3361,8 +2928,8 @@ def read_registry(r):
             if line.strip():
                 d = dict(zip(header, parse_line(line)))
                 rows.append({"label": d["Объект"], "line": int(d["Строка"]), "hash": d["Хэш"],
-                             "time": int(d["Время мс"]), "cpu": int(d["CPU мс"]),
-                             "reads": int(d["Логических чтений"]), "head": d.get("Начало текста") or "",
+                             "time": int(d["Время мс"]), "cpu": int_value(d["CPU мс"]),    # пусто - нет данных
+                             "reads": int_value(d["Логических чтений"]), "head": d.get("Начало текста") or "",
                              "runs": int(d.get("Запусков") or 0), "row": d})
     except (StopIteration, KeyError, ValueError):
         return None, f"Реестр {r['label']} поврежден: {rel}"
@@ -3778,6 +3345,10 @@ def run_mode2(arg_a, arg_b):
     cost = cost_line("Затраты всего", ra["total"], rb["total"])
     if cost:
         head.append(both(cost))
+    plans_a, plans_b = ra["run"].get("Планы (--explain)"), rb["run"].get("Планы (--explain)")
+    if plans_a != plans_b:      # auto_explain замеряет планы и увеличивает время
+        head.append(both(f"Внимание: планы (--explain) в запусках разные: A={plans_a or 'нет'}, "
+                         f"B={plans_b or 'нет'}; время может быть несравнимо"))
     tolerance = f"допуск float: {FLOAT_TOLERANCE}" if FLOAT_TOLERANCE > 0 else ""
     head.append(("Значения сравниваются без учета регистра" + (f"; {tolerance}" if tolerance else ""),
                  tolerance.capitalize() or None))
@@ -3802,6 +3373,230 @@ def run_mode2(arg_a, arg_b):
     return 0 if identical else 1
 
 
+# ============================================================ просмотр сервера: --show, --kill, --cancel
+
+SHOW_KINDS = ("sessions", "current", "heavy", "tables", "functions", "io", "waits", "space", "temp")
+SHOW_STATS = ("tables", "functions", "io")       # накопительные счетчики: с --interval - разница двух снимков
+WAITS_DEFAULT_S = 10          # --show waits: длительность без --interval
+SHOW_TOP = 20                 # --show: строк в консоли
+SHOW_COL_MAX = 30             # --show: ширина колонки в консоли (кроме последней - она до края окна)
+
+
+def show_value(v):
+    """Значение строки --show текстом (для консоли и CSV)."""
+    if v is None:
+        return ""
+    if isinstance(v, (dt.datetime, dt.date, dt.time)):
+        return v.isoformat(sep=" ") if isinstance(v, dt.datetime) else v.isoformat()
+    if isinstance(v, (bytes, bytearray)):
+        return "0x" + v.hex()
+    if isinstance(v, float):
+        return f"{v:g}"
+    return str(v)
+
+
+def show_table(cols, rows, width):
+    """Таблица для консоли: колонки cols [(ключ, заголовок)], строки - словари; одна строка таблицы - одна
+    строка консоли не шире width. Длинные значения обрезаются, последняя колонка - до края."""
+    cells = [[" ".join(show_value(r.get(k)).split()) for k, _ in cols] for r in rows]
+    right = [all(isinstance(r.get(k), (int, float)) for r in rows if r.get(k) is not None) for k, _ in cols]
+    widths = [min(max([len(t)] + [len(c[i]) for c in cells]), SHOW_COL_MAX) for i, (_, t) in enumerate(cols)]
+    rest = width - sum(widths[:-1]) - 2 * (len(cols) - 1)
+    widths[-1] = max(min(max([len(cols[-1][1])] + [len(c[-1]) for c in cells]), rest), 10)
+
+    def line(values):
+        out = []
+        for v, w, r in zip(values, widths, right):
+            v = v if len(v) <= w else v[:w - 3] + "..."
+            out.append(v.rjust(w) if r else v.ljust(w))
+        return "  ".join(out).rstrip()
+    return [line([t for _, t in cols]), line(["-" * w for w in widths])] + [line(c) for c in cells]
+
+
+def write_show_csv(path, cols, rows):
+    """Все строки и колонки --show в CSV того же вида, что файлы таблиц запуска (пустое значение - пустая ячейка)."""
+    def cell(v):
+        v = show_value(v)
+        return format_cell(escape(v)) if v else ""
+    with open(path, "w", encoding=FILE_ENCODING, newline="\n") as f:
+        f.write(DELIM.join(cell(t) for _, t in cols) + "\n")
+        for r in rows:
+            f.write(DELIM.join(cell(r.get(k)) for k, _ in cols) + "\n")
+
+
+def show_pause(seconds):
+    """Пауза --interval между снимками: Ctrl+C или команда stop прерывают."""
+    end = time.monotonic() + seconds
+    while (left := end - time.monotonic()) > 0:
+        if Stop.reason is not None:
+            raise ScriptError(f"прервано: {Stop.reason}")
+        time.sleep(min(left, 0.1))
+
+
+def delta_rows(before, after, key, counters):
+    """Разница накопительных счетчиков двух снимков (строки - словари) по ключу key: строки, у которых
+    что-то изменилось. Строки нет в первом снимке - счетчики второго целиком; счетчик уменьшился
+    (статистику сбросили) - значение второго снимка."""
+    old = {tuple(r.get(k) for k in key): r for r in before}
+    out = []
+    for r in after:
+        b = old.get(tuple(r.get(k) for k in key)) or {}
+        d = dict(r)
+        for c in counters:
+            v, p = r.get(c), b.get(c)
+            if v is not None and p is not None and v >= p:
+                d[c] = v - p
+        if any(d.get(c) for c in counters):
+            out.append(d)
+    return out
+
+
+FILE_TYPES = {"ROWS": "данные", "LOG": "лог"}
+
+
+def show_rows(db, kind, query, order, hours, top, interval):
+    """Строки --show и строка пояснения (или None)."""
+    if kind == "sessions":
+        return db.sessions(query), None
+    if kind == "current":
+        res = db.current(query)
+        parts = [(k, res[f]) for k, f in (("Сессий", "sessions"), ("задач в очереди к CPU", "runnable"),
+                                          ("ждут память", "memory_waits"), ("время сервера", "server_time"))]
+        return res["rows"], ", ".join(f"{k}: {v}" for k, v in parts if v is not None)
+    if kind == "heavy":
+        rows = db.heavy(query, order, hours, max(top, 100), interval, show_pause)
+        return rows, f"За {interval} с (разница двух снимков)" if interval else None
+    if kind == "waits":
+        log(f"Ожидания за {interval or WAITS_DEFAULT_S} с...")
+        res = db.waits(query, interval or WAITS_DEFAULT_S, show_pause)
+        return res["rows"], res["note"]
+    def mb(v):                          # 11000.0 -> 11000, 12.25 -> 12.2
+        return "нет данных" if v is None else f"{v:.1f}".rstrip("0").rstrip(".") + " МБ"
+    if kind == "space":                 # «Место» экрана «База данных»: база подключения
+        res = db.space(query)
+        notes = [f"{FILE_TYPES.get(s['type'], s['type'])}: занято {mb(s['used_mb'])} из {mb(s['size_mb'])}, можно занять "
+                 f"еще {mb(s['avail_mb'])}" for s in res["summary"] or []]
+        if not db.space_per_db:
+            notes.append("свободное место на диске средствами SQL не узнать")
+        return res["rows"], "; ".join(notes + ([res["note"]] if res["note"] else []))
+    if kind == "temp":                  # «Временные данные»: весь сервер
+        res = db.temp(query)
+        s = res["summary"]
+        notes = [f"tempdb: всего {mb(s['total_mb'])}, свободно {mb(s['free_mb'])}, хранилище версий {mb(s['version_mb'])}, "
+                 f"внутренние объекты {mb(s['internal_mb'])}, пользовательские {mb(s['user_mb'])}"] if s else []
+        if res.get("dbs"):
+            notes.append("временные файлы баз с последнего сброса статистики: "
+                         + ", ".join(f"{x['db']} {mb(x['mb'])} ({x['files']})" for x in res["dbs"]))
+        return res["rows"], "; ".join(notes + ([res["note"]] if res["note"] else []))
+    spec = db.stats_spec[kind]          # tables, functions, io: накопительные счетчики
+    res = db.stats(kind, query)
+    rows, notes = res["rows"], [res["note"]]
+    if interval:
+        log(f"Первый снимок есть, второй - через {interval} с...")
+        show_pause(interval)
+        res = db.stats(kind, query)
+        rows = delta_rows(rows, res["rows"], spec["key"], spec["counters"])
+        notes.insert(0, f"За {interval} с (разница двух снимков)")
+    else:
+        rows = [r for r in rows if any(r.get(c) for c in spec["counters"])]
+        notes.insert(0, spec["since"])
+    rows.sort(key=lambda r: -(r.get(spec["order"]) or 0))
+    return rows, "; ".join(x for x in notes if x)
+
+
+def run_show(kind, top, csv_arg, order, hours, interval=0):
+    """--show: запрос просмотра сервера (тот же, что в GUI); в консоль - первые top строк, в CSV - все."""
+    if ensure_settings_file():
+        log("Заполните настройки подключения и запустите скрипт снова.")
+        return 2
+    db = get_dialect(read_settings())
+    order = order or db.heavy_orders[0]
+    if kind == "heavy" and order not in db.heavy_orders:
+        raise ScriptError(f"--order: неизвестный показатель {order} (есть: {', '.join(db.heavy_orders)})")
+    if interval < 0 or (interval and kind in ("sessions", "current", "space", "temp")):
+        raise ScriptError("--interval S: S > 0, только для heavy, tables, functions, io, waits")
+    if interval and hours:
+        raise ScriptError("--interval и --hours вместе не задаются")
+    conn = db_connect(db, APP_NAME + " show")
+    try:
+        cur = conn.cursor()
+        db.session_id(cur)        # часы сервера - для имени файла CSV
+        cur.close()
+        query = conn_query(conn)
+        try:
+            rows, totals = show_rows(db, kind, query, order, hours, top, interval)
+        except ValueError as e:          # диалект: нет расширения, неверный показатель и т. п.
+            raise ScriptError(str(e))
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    spec = db.show_columns[kind]
+    width = shutil.get_terminal_size((120, 25)).columns - 1
+    shown = rows[:max(top, 0)]
+    lines = show_table([(k, t) for k, t, brief in spec if brief], shown, width) if shown else ["нет строк"]
+    if totals:
+        lines.append(totals)
+    if len(shown) < len(rows):
+        lines.append(f"Показано {len(shown)} из {len(rows)} (--top N; все строки и колонки - --csv)")
+    print("\n".join(lines))
+    if csv_arg is not None:
+        base = Path(OUTPUT_DIR) if OUTPUT_DIR else Path.cwd()
+        path = Path(csv_arg) if csv_arg else unique_path(base / f"{kind}_{ServerTime.now().strftime(DT_FORMAT)}.csv")
+        write_show_csv(path, [(k, t) for k, t, _ in spec], rows)
+        log(f"CSV: {path}")
+    return 0
+
+
+def run_kill(spid, cancel):
+    """--kill / --cancel: закрыть сессию или отменить ее текущий запрос - после подтверждения в консоли."""
+    if ensure_settings_file():
+        log("Заполните настройки подключения и запустите скрипт снова.")
+        return 2
+    db = get_dialect(read_settings())
+    if cancel and not db.can_cancel:
+        raise ScriptError(f"в {db.name} нельзя отменить запрос чужой сессии, только закрыть ее (--kill)")
+    conn = db_connect(db, APP_NAME + " show")
+    try:
+        cur = conn.cursor()
+        own = db.session_id(cur)
+        cur.close()
+        query = conn_query(conn)
+        try:
+            spid = db.check_kill(spid, own)
+        except ValueError as e:
+            raise ScriptError(f"сессия {spid}: {e}")
+        row = db.session_row(query, spid)
+        if row is None:
+            raise ScriptError(f"сессия {spid} не найдена")
+        what = "Отменить текущий запрос сессии" if cancel else "Закрыть сессию"
+        info = f"логин: {row[3] or '?'}, компьютер: {row[1] or '?'}, программа: {row[2] or '?'}, подключена: {row[0]}"
+        if not sys.stdin or not sys.stdin.isatty():
+            raise ScriptError("нужно подтверждение в консоли: запустите команду в окне консоли")
+        sys.stderr.write(f"{what} {spid} ({info})?" + ("" if cancel else " Ее открытая транзакция откатится.")
+                         + " Да - y: ")
+        sys.stderr.flush()
+        try:
+            answer = input()
+        except EOFError:          # ввод закрыт - ответа нет
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes", "д", "да"):
+            log("Ничего не сделано")
+            return 0
+        try:
+            (db.cancel if cancel else db.kill)(query, spid, own)
+        except ValueError as e:          # нет прав, сессия уже закрылась
+            raise ScriptError(f"сессия {spid}: {e}")
+        log("Запрос отменен" if cancel else f"Сессия {spid} закрыта")
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 # ============================================================ точка входа
 
 def main(argv=None):
@@ -3820,9 +3615,28 @@ def main(argv=None):
                         help="режим 1: выполнить N раз (N >= 2), первый прогон - прогрев")
     parser.add_argument("--profile", action="store_true",
                         help="режим 1: реестр операторов по времени (выборка текущего оператора)")
+    parser.add_argument("--explain", nargs="?", type=int, const=EXPLAIN_MIN_MS, metavar="МС",
+                        help="режим 1, PostgreSQL: фактические планы операторов не короче МС мс (включает --profile)")
     parser.add_argument("--session", type=int, metavar="N",
                         help="режим 3: наблюдать за сессией N (реестр операторов в папке "
                              "Sessions_profile/Session_<время>_N)")
+    parser.add_argument("--show", choices=SHOW_KINDS, metavar="ВИД",
+                        help="просмотр сервера: sessions, current, heavy (запросы GUI), tables, functions, io, waits, space, temp")
+    parser.add_argument("--top", type=int, default=SHOW_TOP, metavar="N",
+                        help=f"--show: строк в консоли (по умолчанию {SHOW_TOP})")
+    parser.add_argument("--csv", nargs="?", const="", metavar="файл",
+                        help="--show: все строки и колонки в файл CSV")
+    parser.add_argument("--order", metavar="X",
+                        help="--show heavy: показатель сортировки (MS SQL Server: cpu - по умолчанию, cpu_avg, time, "
+                             "time_avg, reads, reads_avg, writes, execs, max_time; PostgreSQL: те же без cpu, cpu_avg)")
+    parser.add_argument("--hours", type=int, default=0, metavar="N",
+                        help="--show heavy: только выполнявшиеся за последние N часов")
+    parser.add_argument("--interval", type=int, default=0, metavar="S",
+                        help="--show: разница двух снимков с паузой S секунд (heavy - только PostgreSQL, tables, "
+                             f"functions, io); waits - длительность (по умолчанию {WAITS_DEFAULT_S})")
+    parser.add_argument("--kill", type=int, metavar="N", help="закрыть сессию N (с подтверждением)")
+    parser.add_argument("--cancel", type=int, metavar="N",
+                        help="отменить текущий запрос сессии N (с подтверждением; только PostgreSQL)")
     parser.add_argument("--parent-pid", type=int, metavar="PID",
                         help="запуск из другой программы: если процесс PID закрылся, "
                              "остановиться как по Ctrl+C")
@@ -3840,16 +3654,27 @@ def dispatch(parser, args):
     """Выполняет режим по аргументам: (код возврата, текст ошибки или None)."""
     try:
         Stop.start(args.parent_pid)
+        server = [x for x in (args.show, args.kill, args.cancel) if x is not None]
+        if server:
+            if len(server) > 1 or args.files or args.rollback or args.repeat or args.profile \
+                    or args.explain is not None or args.session is not None:
+                parser.print_help(sys.stderr)
+                return 2, "неверные аргументы"
+            if args.show is not None:
+                return run_show(args.show, args.top, args.csv, args.order, args.hours, args.interval), None
+            return run_kill(args.kill if args.kill is not None else args.cancel, args.cancel is not None), None
+        if args.interval:
+            raise ScriptError("--interval - только с --show")
         if args.session is not None:
-            if args.files or args.rollback or args.repeat or args.profile:
+            if args.files or args.rollback or args.repeat or args.profile or args.explain is not None:
                 parser.print_help(sys.stderr)
                 return 2, "неверные аргументы"
             return run_session(args.session), None
         if args.repeat is not None and args.repeat < 2:
             raise ScriptError("--repeat: N должно быть не меньше 2")
         if len(args.files) == 1:
-            return run_mode1(args.files[0], args.rollback, args.repeat or 1, args.profile), None
-        if len(args.files) == 2 and not (args.rollback or args.repeat or args.profile):
+            return run_mode1(args.files[0], args.rollback, args.repeat or 1, args.profile, args.explain), None
+        if len(args.files) == 2 and not (args.rollback or args.repeat or args.profile or args.explain is not None):
             dirs = [registry_dir(x) for x in args.files]
             if all(dirs):
                 return run_registry_compare(*dirs), None
@@ -3871,4 +3696,7 @@ def dispatch(parser, args):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Работа идет в модуле CompareQuery, а не в __main__: диалект (cq_mssql) импортирует ядро по имени,
+    # и две копии модуля (__main__ и CompareQuery) разошлись бы состоянием (часы сервера, события, остановка).
+    import CompareQuery
+    sys.exit(CompareQuery.main())

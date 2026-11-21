@@ -2,7 +2,7 @@
 // Своего окна нет: либо сообщение об ошибке, либо консоль установки пакетов, либо просто запуск.
 //   1. Ищет Python 3.10+: py.exe -3, python.exe из PATH (кроме заглушки Microsoft Store), реестр PythonCore.
 //      Нет - сообщение об ошибке.
-//   2. Проверяет пакеты (pywebview, pyodbc) без их импорта. Нет - консоль «Установка необходимых пакетов
+//   2. Проверяет пакеты (pywebview, pyodbc, psycopg) без их импорта. Нет - консоль «Установка необходимых пакетов
 //      python: ...» с логом pip; после ее закрытия проверяет еще раз: ошибка или запуск.
 //   3. Запускает pythonw.exe src\CompareQueryGUI.py (папка exe - текущая), аргументы передаются дальше.
 // Сборка: src\launcher\build.cmd (компилятор C# из .NET Framework 4, есть в Windows 8.1/10/11), exe - в корне.
@@ -17,7 +17,7 @@ static class Launcher
 {
     const string Title = "CompareQuery";
     // модуль для проверки -> пакет pip
-    static readonly string[,] Packages = { { "webview", "pywebview" }, { "pyodbc", "pyodbc" } };
+    static readonly string[,] Packages = { { "webview", "pywebview" }, { "pyodbc", "pyodbc" }, { "psycopg", "psycopg[binary]" } };
 
     [STAThread]
     static int Main(string[] args)
