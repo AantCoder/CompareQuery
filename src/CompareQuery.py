@@ -3045,10 +3045,11 @@ def statement_pairs(rows_a, rows_b):
     return pairs
 
 
-def statement_changes(rows_a, rows_b, pairs=None):
+def statement_changes(rows_a, rows_b, pairs=None, significant=True):
     """Значимые изменения времени операторов, которые входят в верхние TOP_SHARE (не меньше TOP_MIN)
     по времени в A или в B: [(строка A или None, строка B или None, пометка)] по убыванию разницы.
-    pairs - уже готовые пары (сравнение реестров убирает из них операторы до начала наблюдения)."""
+    pairs - уже готовые пары (сравнение реестров убирает из них операторы до начала наблюдения).
+    significant=False - все пары без отбора (GUI, «все операторы»), порядок тот же."""
     def top(rows):
         n = max(TOP_MIN, math.ceil(TOP_SHARE * len(rows)))
         return {id(r) for r in sorted(rows, key=lambda r: -r["time"])[:n]}
@@ -3056,11 +3057,11 @@ def statement_changes(rows_a, rows_b, pairs=None):
     top_a, top_b = top(rows_a), top(rows_b)
     out = []
     for a, b, note in (statement_pairs(rows_a, rows_b) if pairs is None else pairs):
-        if not ((a is not None and id(a) in top_a) or (b is not None and id(b) in top_b)):
+        if significant and not ((a is not None and id(a) in top_a) or (b is not None and id(b) in top_b)):
             continue
         ta, tb = (a["time"] if a else 0), (b["time"] if b else 0)
         d = tb - ta
-        if abs(d) < SIGNIFICANT_MS or (ta and abs(d) * 100 < SIGNIFICANT_PCT * ta):
+        if significant and (abs(d) < SIGNIFICANT_MS or (ta and abs(d) * 100 < SIGNIFICANT_PCT * ta)):
             continue
         out.append((-abs(d), (a, b, note)))
     return [x for _, x in sorted(out, key=lambda x: x[0])]
@@ -3215,7 +3216,8 @@ def registry_compare(dir_a, dir_b):
     """Сравнение двух реестров операторов (наблюдений --session или запусков --profile); его
     показывают и файл сравнения, и GUI. Возвращает словарь:
     rows - строки реестров A и B; notes - строки пояснений [(полная, сокращенная или None)];
-    total - время общей части A и B; objects - objects_block; changes - statement_changes."""
+    total - время общей части A и B; objects - objects_block; changes - statement_changes;
+    pairs - все пары операторов без исключенных (GUI: «все операторы»)."""
     rows = []
     for d, lbl in ((dir_a, "A"), (dir_b, "B")):
         r, err = read_registry({"run": {"Реестр": REGISTRY_FILE}, "dir": d, "label": lbl})
@@ -3249,7 +3251,7 @@ def registry_compare(dir_a, dir_b):
     return {"rows": rows, "notes": notes,
             "total": [sum(r["time"] for r in rs if id(r) not in gone) for rs in rows],
             "objects": objects_block(pairs, renamed),
-            "changes": statement_changes(rows[0], rows[1], pairs)}
+            "changes": statement_changes(rows[0], rows[1], pairs), "pairs": pairs}
 
 
 def run_registry_compare(dir_a, dir_b):

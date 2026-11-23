@@ -124,7 +124,11 @@ pre.hl{margin:0;overflow:hidden;pointer-events:none;color:#2D3646}
 .opc.old{opacity:.85}
 .oph{display:flex;align-items:center;gap:14px;min-height:26px}
 .oph .lbl.now{color:#2F4AC0}.opc.done .oph .lbl.now{color:#6E788B}
-.optm{margin-left:auto;font-size:18px;font-weight:500;color:#2D3646}
+.optm{font-size:18px;font-weight:500;color:#2D3646}
+.optw{margin-left:auto;position:relative;display:inline-flex}
+/* «прошлый» - под таймером, вне потока: высота карточки и строки консоли не меняется */
+.opprev{position:absolute;right:0;top:100%;margin-top:1px;font-size:11px;line-height:1;font-weight:400;color:#98A1B2;white-space:nowrap;font-family:Inter,system-ui,sans-serif}
+.cl.old .opprev{opacity:0}                                         /* ушедшая строка консоли - без подписи; в карточке запуска остается */
 .opn{font-size:18px;font-weight:700}.opn span{color:#485264;font-weight:500}
 .opx{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px;color:#485264;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:text}
 .wt{color:#9A4A07;display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:700;transition:opacity 3s,transform 3s;animation:wp 2.4s ease-in-out infinite}
@@ -141,7 +145,8 @@ pre.hl{margin:0;overflow:hidden;pointer-events:none;color:#2D3646}
 .cl.old{transform:translateY(-21px);opacity:.4}
 .cl.gone{transform:translateY(-31px);opacity:0;transition:transform .6s,opacity .6s}
 .cl .tmc{color:#6E788B}.cl .ob{font-weight:700;color:#1B2230}.cl .tx{color:#485264;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
-.cl .optm{margin-left:auto;color:#2D3646;font-weight:500;padding-left:40px;font-size:15px}
+.cl .optw{padding-left:40px}.cl .optm{color:#2D3646;font-weight:500;font-size:15px}
+.cl .opprev{margin-top:-5px}
 .cl .wt{flex-shrink:0;font-size:15px}
 
 /* кольцо ожидания обновления реестра наблюдения: заполняется за 10 с, обнуляется с новыми файлами */
@@ -267,6 +272,9 @@ select.inp{appearance:auto;cursor:pointer}
 .ring.cd.wait .rf{animation:ringdown linear forwards}                 /* полное кольцо тает до нуля */
 .ring.cd.load .rf{stroke:#9FB2F2}
 .ring.cd.pause .rf{stroke:#C9CFDA}
+.ring.sr{cursor:pointer}
+.ring.sr.pause .rb{stroke:#E3E7EF}
+.ring.sr.pause .rf{stroke:#A7AFBD}                                  /* пауза наблюдения: отсчет идет, обновления нет */
 @keyframes ringdown{to{stroke-dashoffset:50.27}}
 .kpis.k6{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}   /* шесть плашек в ряд от ~880 px */
 .kpi.warn{border-color:#E8A0A0;background:#FFFAFA}
@@ -310,6 +318,7 @@ input.inp:focus,textarea.inp:focus{border-color:#3B5BDB;box-shadow:0 0 0 3px rgb
 .ctxm hr{border:none;border-top:1px solid #EEF1F6;margin:3px 0}
 /* свернутая таблица (длинный журнал) */
 /* заметка запуска в панели: после значка курсивом, сколько поместится */
+.ti.r .ntx+.end{flex-shrink:0}       /* есть заметка - сжимается только она (иначе «−5%» обрезалось в «−5...») */
 .ti.r .ntx{margin-left:6px;flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;font-size:12px;color:#485264;font-weight:400}
 
 /* полоса прогресса нескольких прогонов: участок текущего прогона светлее, по нему бегает ползунок */
@@ -401,6 +410,15 @@ input.inp:focus,textarea.inp:focus{border-color:#3B5BDB;box-shadow:0 0 0 3px rgb
 .wbar span{min-width:3px}
 .wleg{display:flex;flex-wrap:wrap;gap:6px 18px;padding:0 20px 12px;font-size:12px;color:#485264}
 .wleg i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.wleg .wsum{font-size:13px;font-weight:700;color:#1B2230}
+.wcard{padding:16px 0 4px}                                 /* плашка идущего запуска и наблюдения: только полоса */
+.wpair{padding:2px 20px 4px}                               /* две полосы сравнения в одном масштабе */
+.wrow{display:flex;gap:10px;align-items:flex-start}
+.wrow .wtrk{flex:1;min-width:0}
+.wrow .wbar{margin:1px 0 6px}
+.wrow .wleg{padding:0 0 12px}
+.wic{flex:0 0 18px;width:18px;height:16px;margin-top:-2px;display:inline-flex;align-items:center;justify-content:center}   /* одна ширина у всех: полосы начинаются ровно */
+.wic.ab{height:14px;margin-top:0;border-radius:7px;font-size:10.5px;font-weight:700;background:#EEF1F6;color:#485264}
 .g-lock{background:#D9534F}.g-disk{background:#3B5BDB}.g-cpu{background:#E8A21A}.g-net{background:#12A87C}
 .g-mem{background:#9C36B5}.g-par{background:#748FFC}.g-page{background:#7A8496}.g-oth{background:#BCC3CF}
 .shr{display:inline-block;width:40px;height:6px;background:#EEF1F6;border-radius:3px;margin-right:8px;vertical-align:middle;overflow:hidden}
@@ -417,3 +435,8 @@ input.inp:focus,textarea.inp:focus{border-color:#3B5BDB;box-shadow:0 0 0 3px rgb
 .warn{display:inline-flex;vertical-align:-2px;margin:0 4px;cursor:help}
 .t td.n .warn{margin:0 5px 0 0}
 .chip.sm{height:19px;padding:0 7px;font-size:11px;vertical-align:1px}
+.sw.sm{width:28px;height:16px;border-radius:8px;cursor:pointer;display:inline-block;vertical-align:-3px}
+.sw.sm::after{top:2px;left:2px;width:12px;height:12px}
+.sw.sm.on::after{left:14px}
+.cmpsig{display:inline-flex;align-items:center;gap:8px}
+.cmpsig .off{text-decoration:line-through;opacity:.7}

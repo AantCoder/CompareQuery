@@ -202,17 +202,82 @@ def same_data(a, b):
     return True
 
 
-def read_csv_rows(path):
-    """registry.csv / log.csv: заголовок и строки-словари."""
+def read_csv_rows(path, tail=0):
+    """registry.csv / log.csv: заголовок и строки-словари; tail - только последние строки (read_csv_tail)."""
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
-            rows = list(csv.reader(f, delimiter=";"))
-    except OSError:
+        if tail:
+            rows = read_csv_tail(path, tail)
+        else:
+            with open(path, encoding="utf-8-sig", newline="") as f:
+                rows = list(csv.reader(f, delimiter=";"))
+    except (OSError, UnicodeDecodeError):
         return [], []
     if not rows:
         return [], []
     head = rows[0]
     return head, [dict(zip(head, r)) for r in rows[1:]]
+
+
+def read_csv_tail(path, n):
+    """Заголовок и последние n строк log.csv. Журнал идущего наблюдения растет все время, и целиком раз
+    в 10 с он не читается: файл читается с конца кусками. Строка журнала - одна строка файла (текст
+    оператора записан без переводов строк, cq.head_cell)."""
+    with open(path, "rb") as f:
+        head = f.readline()
+        start = len(head)
+        f.seek(0, 2)
+        pos, data = f.tell(), b""
+        while pos > start and data.count(b"\n") <= n:
+            step = min(pos - start, 65536)
+            pos -= step
+            f.seek(pos)
+            data = f.read(step) + data
+    lines = data.split(b"\n")[1 if pos > start else 0:]      # первая - кусок строки
+    data = head + b"\n".join([x for x in lines if x.strip()][-n:])
+    return list(csv.reader(data.decode("utf-8-sig").splitlines(), delimiter=";"))
+
+
+STMT_ALL_TOP = 500      # экран сравнения, «все операторы»: строк не больше (без «показать еще»)
+WAIT_KEYS = ("CPU мс", "Ожидание блокировок мс", "Ожидание ресурсов мс", "Ожидание ресурсов 1 место",
+             "Ожидание ресурсов 2 место", "Ожидание ресурсов 3 место", "Ожидание клиента мс")
+
+
+def reg_waits(rows):
+    """Колонки ожиданий строк реестра (cq.read_registry) - для полосы долей ожиданий (JS regWaitItems)."""
+    return [{k: r["row"].get(k) or "" for k in WAIT_KEYS} for r in rows]
+
+
+def stmt_waits(r):
+    """Ожидания оператора: блокировки + ресурсы, мс; нет строки или пустые счетчики - None."""
+    if not r:
+        return None
+    v = [r["row"].get(k) for k in ("Ожидание блокировок мс", "Ожидание ресурсов мс")]
+    v = [int(x) for x in v if x and str(x).isdigit()]
+    return sum(v) if v else None
+
+
+def statement_rows(changes, dir_a, dir_b, runs=False):
+    """Строки таблицы операторов экранов сравнения из пар cq.statement_changes: разбор строки файла
+    сравнения (cq.statement_text), начало текста, первое ожидание A и B, ожидания мс, файлы текста и плана
+    в каждом запуске или наблюдении (нет файла - None); runs - число запусков оператора (наблюдения)."""
+    def files(r, d):
+        row = r["row"] if r else {}
+        return [str(d / row[k]) if row.get(k) else None for k in ("Текст", "План")]
+    out = []
+    for ar, br, note in changes:
+        r = br or ar
+        m = STMT_RE.match(cq.statement_text(ar, br, note))
+        st = {k: (int(v) if v and v.isdigit() else v) for k, v in m.groupdict().items()} if m else \
+            {"label": r["label"], "line": r["line"], "note": note, "a": 0, "b": 0, "pct": ""}
+        st["text"] = r["head"]
+        st["wait"] = (br["row"].get("Ожидание ресурсов 1 место") if br else "") or ""
+        st["wait_a"] = (ar["row"].get("Ожидание ресурсов 1 место") if ar else "") or ""
+        st["waits_a"], st["waits_b"] = stmt_waits(ar), stmt_waits(br)
+        st["files_a"], st["files_b"] = files(ar, dir_a), files(br, dir_b)
+        if runs:
+            st["runs_a"], st["runs_b"] = (ar["runs"] if ar else 0), (br["runs"] if br else 0)
+        out.append(st)
+    return out
 
 
 def registry_header(path):
@@ -408,7 +473,8 @@ class Api:
     def __init__(self):
         self._lock = threading.Lock()
         self._gui_lock = threading.Lock()
-        self._events = []          # (номер, id процесса, событие)
+        self._events = []          # (номер, id процесса, событие) - еще не полученные интерфейсом (poll)
+        self._base = 0             # столько первых событий интерфейс уже получил, они не хранятся
         self._procs = {}
         self._next = 1
         self._window = None
@@ -427,7 +493,7 @@ class Api:
 
     def push(self, pid, ev):
         with self._lock:
-            self._events.append((len(self._events) + 1, pid, ev))
+            self._events.append((self._base + len(self._events) + 1, pid, ev))
 
     def _gui(self):
         raw = read_json()
@@ -530,10 +596,15 @@ class Api:
                 "procs": [p.info() for p in self._procs.values()]}
 
     def poll(self, since):
-        """События процессов с номером больше since."""
+        """События процессов с номером больше since. События до since интерфейс уже получил: они
+        удаляются (запуск или наблюдение на часы дали бы сотни тысяч). Перезагруженная страница (--dev)
+        получает только еще не полученные."""
         with self._lock:
-            return {"seq": len(self._events), "events": [{"seq": n, "proc": pid, "ev": ev}
-                                                         for n, pid, ev in self._events[since:]],
+            drop = min(max(0, since - self._base), len(self._events))
+            del self._events[:drop]
+            self._base += drop
+            return {"seq": self._base + len(self._events), "events": [{"seq": n, "proc": pid, "ev": ev}
+                                                                      for n, pid, ev in self._events],
                     "procs": [p.info() for p in self._procs.values()]}
 
     # ---------------------------------------------------- рабочая папка и настройки
@@ -917,11 +988,13 @@ class Api:
         return {"short": short.read_text(encoding="utf-8-sig") if short.exists() else "",
                 "full": p.read_text(encoding="utf-8-sig") if p.exists() else ""}
 
-    def compare_details(self, path, a, b):
+    def compare_details(self, path, a, b, all_ops=False):
         """Экран сравнения (GUI.md §4.2): разбор полного файла сравнения режима 2 и отчетов A и B.
         Таблицы - заголовок и строки раздела; операторы - те же пары, что в разделе «Операторы»
         (cq.statement_changes по registry.csv обоих запусков), с началом текста, первым ожиданием B
-        и файлами текста и плана оператора в каждом запуске (пути; нет файла - None)."""
+        и файлами текста и плана оператора в каждом запуске (пути; нет файла - None). all_ops - все пары
+        операторов без отбора значимых (не больше STMT_ALL_TOP, count - сколько всего); waits - колонки
+        ожиданий обоих реестров для полос долей ожиданий."""
         p = self._path(path)
         sections = []
         for line in p.read_text(encoding="utf-8-sig").split("\n"):
@@ -956,19 +1029,10 @@ class Api:
                 rows, err = cq.read_registry({"run": x["run"], "dir": rp.parent, "label": lbl})
                 regs.append((rows, (rp.parent / x["run"]["Реестр"]).parent))
             if regs[0][0] is not None and regs[1][0] is not None:
-                def files(r, d):
-                    row = r["row"] if r else {}
-                    return [str(d / row[k]) if row.get(k) else None for k in ("Текст", "План")]
-                out["statements"] = []
-                for ar, br, note in cq.statement_changes(regs[0][0], regs[1][0]):
-                    r = br or ar
-                    m = STMT_RE.match(cq.statement_text(ar, br, note))
-                    st = {k: (int(v) if v and v.isdigit() else v) for k, v in m.groupdict().items()} if m else \
-                        {"label": r["label"], "line": r["line"], "note": note, "a": 0, "b": 0, "pct": ""}
-                    st["text"] = r["head"]
-                    st["wait"] = (br["row"].get("Ожидание ресурсов 1 место") if br else "") or ""
-                    st["files_a"], st["files_b"] = files(ar, regs[0][1]), files(br, regs[1][1])
-                    out["statements"].append(st)
+                changes = cq.statement_changes(regs[0][0], regs[1][0], significant=not all_ops)
+                out["statements"] = statement_rows(changes[:STMT_ALL_TOP], regs[0][1], regs[1][1])
+                out["all"], out["count"] = all_ops, len(changes)
+                out["waits"] = [reg_waits(regs[0][0]), reg_waits(regs[1][0])]
         return out
 
     def compare_sessions(self, a, b):
@@ -976,28 +1040,18 @@ class Api:
         da, db = (self._path(Path(cq.SESSIONS_DIR) / Path(x).name) for x in (a, b))
         return self._start("compare", [str(da), str(db)], f"{da.name} ↔ {db.name}")
 
-    def session_compare_details(self, a, b):
+    def session_compare_details(self, a, b, all_ops=False):
         """Экран сравнения наблюдений (GUI.md §4.3): то же, что файл сравнения (cq.registry_compare),
-        с началом текста, первым ожиданием B и файлами текста и плана оператора в каждом наблюдении."""
+        с началом текста, первым ожиданием B и файлами текста и плана оператора в каждом наблюдении.
+        all_ops, count, waits - как у compare_details."""
         da, db = (self._path(Path(cq.SESSIONS_DIR) / Path(x).name) for x in (a, b))
         c = cq.registry_compare(da, db)
-
-        def files(r, d):
-            row = r["row"] if r else {}
-            return [str(d / row[k]) if row.get(k) else None for k in ("Текст", "План")]
-        statements = []
-        for ar, br, note in c["changes"]:
-            r = br or ar
-            m = STMT_RE.match(cq.statement_text(ar, br, note))
-            st = {k: (int(v) if v and v.isdigit() else v) for k, v in m.groupdict().items()} if m else                 {"label": r["label"], "line": r["line"], "note": note, "a": 0, "b": 0, "pct": ""}
-            st["text"] = r["head"]
-            st["wait"] = (br["row"].get("Ожидание ресурсов 1 место") if br else "") or ""
-            st["files_a"], st["files_b"] = files(ar, da), files(br, db)
-            st["runs_a"], st["runs_b"] = (ar["runs"] if ar else 0), (br["runs"] if br else 0)
-            statements.append(st)
+        changes = cq.statement_changes(c["rows"][0], c["rows"][1], c["pairs"], significant=False) if all_ops else c["changes"]
+        statements = statement_rows(changes[:STMT_ALL_TOP], da, db, runs=True)
         g = self._gui()[1].get("notes") or {}
         return {"total": c["total"], "notes": [f for f, _ in c["notes"]], "objects": c["objects"],
-                "statements": statements, "names": [da.name, db.name],
+                "statements": statements, "all": all_ops, "count": len(changes),
+                "waits": [reg_waits(c["rows"][0]), reg_waits(c["rows"][1])], "names": [da.name, db.name],
                 "heads": [registry_header(d / cq.REGISTRY_FILE) for d in (da, db)],
                 "note_text": [g.get(da.name), g.get(db.name)]}
 
@@ -1063,7 +1117,8 @@ class Api:
 
     def _diff_files(self, kind, args):
         """Пары файлов для внешнего diff: reports [A, B] - отчеты; scripts [A, B] - SQL-файлы отчетов;
-        table [A, B, N] - CSV таблицы N; script [имя.sql] - скрипт и SQL-файл опорного запуска."""
+        table [A, B, N] - CSV таблицы N; script [имя.sql] - скрипт и SQL-файл опорного запуска; stmt [A, B] -
+        тексты оператора из файлов реестров (во временные файлы)."""
         def report(name):
             r = self._report(self._path(name))
             if r is None:
@@ -1090,6 +1145,17 @@ class Api:
             if not g.get("reference"):
                 raise ValueError(tr("нет опорного запуска"))
             return sql_of(g["reference"]), self._path(args[0])
+        if kind == "stmt":
+            # тексты оператора [A, B] (NNN - T.sql реестров): во временные файлы только текст, без двух
+            # строк комментария (объект и строка, значения реестра) - иначе они различались бы всегда
+            out = []
+            for side, f in zip("AB", args[:2]):
+                lines = self._path(f).read_text(encoding="utf-8-sig", errors="replace").split("\n")
+                k = 0
+                while k < 2 and k < len(lines) and lines[k].startswith("--"):
+                    k += 1
+                out.append(temp_file(f"{side} - {Path(f).name}", "\n".join(lines[k:])))
+            return out[0], out[1]
         raise ValueError(tr("неизвестный вид сравнения: {kind}", kind=kind))
 
     # ---------------------------------------------------- игнорируемые колонки (GUI.md §5.6, §6.3)
@@ -1400,12 +1466,12 @@ class Api:
                          stderr=subprocess.DEVNULL)
         return True
 
-    def session_details(self, name):
-        """Наблюдение по имени папки в Sessions_profile."""
+    def session_details(self, name, log_tail=0):
+        """Наблюдение по имени папки в Sessions_profile; log_tail - из журнала только последние строки (идущее)."""
         d = self._path(Path(cq.SESSIONS_DIR) / Path(name).name)
         h = registry_header(d / cq.REGISTRY_FILE)
         return {"folder": str(d), "header": h, "registry": read_csv_rows(d / cq.REGISTRY_TABLE)[1],
-                "log": read_csv_rows(d / cq.REGISTRY_LOG)[1], "slow": slow_info(h),
+                "log": read_csv_rows(d / cq.REGISTRY_LOG, log_tail)[1], "slow": slow_info(h),
                 "note": (self._gui()[1].get("notes") or {}).get(d.name)}
 
     # ---------------------------------------------------- внешние действия
@@ -1497,6 +1563,20 @@ def run_dev(api, port=DEV_PORT):
 
         def log_message(self, *a):
             pass
+
+        def do_GET(self):
+            # метка режима для JS (window.CQ_DEV): api() идет через fetch только здесь. Раньше JS угадывал режим
+            # по тому, появился ли window.pywebview за 300 мс: окно, открывшееся медленнее, слало POST серверу
+            # pywebview и показывало «Unexpected token '<' ... is not valid JSON» (его страница ошибки).
+            if self.path.split("?")[0] not in ("/", "/index.html"):
+                return super().do_GET()
+            html = (WEB / "index.html").read_text(encoding="utf-8")
+            data = html.replace("<script", "<script>window.CQ_DEV = true;</script>\n<script", 1).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def do_POST(self):
             name = self.path.rsplit("/", 1)[-1]

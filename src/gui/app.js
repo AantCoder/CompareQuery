@@ -6,8 +6,10 @@ const ABOUT_TEXT = "v1.1 · © 2026 Ant · MIT License ·";
 const ABOUT_LINK = {text: "GitHub", url: "https://github.com/AantCoder/CompareQuery"};
 
 // ================================================================ связь с Python
+// Режим --dev отмечает сам сервер отладки (window.CQ_DEV в index.html), а не догадка по времени: окно pywebview
+// отдает gui/ своим HTTP-сервером, и POST туда возвращал страницу ошибки («Unexpected token '<'»).
 function api(name, ...args) {
-  if (window.pywebview && window.pywebview.api) return window.pywebview.api[name](...args);
+  if (!window.CQ_DEV) return window.pywebview.api[name](...args);
   return fetch("/api/" + name, {method: "POST", body: JSON.stringify(args)}).then(async r => {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
@@ -25,6 +27,7 @@ const S = {
   sort: {},          // id таблицы -> {col, dir}
   live: {},          // состояние живых экранов (стопка, строка консоли)
   runNotes: {},      // id идущего запуска -> заметка (имя отчета известно только в конце запуска)
+  cancelled: {},     // id наблюдений, отмененных «Отменить наблюдение»: по окончании папка - в корзину
   queue: null,       // {name, p}: скрипт, который запустится после текущего запуска («В очередь»)
 };
 const runBusy = () => Object.values(S.procs).some(p => p.info.kind === "run" && p.info.running);
@@ -172,6 +175,7 @@ const I = {
   back: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>`,
   play: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></svg>`,
   stop: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>`,
+  spark: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="#3B5BDB"><path d="M12 1.5l2.3 7.2 7.2 2.3-7.2 2.3L12 20.5l-2.3-7.2L2.5 11l7.2-2.3z"/><path d="M19.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"/></svg>`,     // «новый»
   star: (s, fill) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="${fill ? "#E8A21A" : "none"}" stroke="#B45309" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>`,
   trash: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>`,
   copy: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>`,
@@ -372,7 +376,8 @@ document.addEventListener("contextmenu", e => {
     const p = S.procs[id];
     if (!p) return;
     tab({k: p.info.kind === "session" ? "session" : "run", pid: +id});
-    add("stop", I.stop(14), p.info.kind === "session" ? t("Остановить и сохранить") : t("Остановить"), () => api("stop", +id).catch(fail), "danger");
+    add("stop", I.stop(14), p.info.kind === "session" ? t("Не наблюдать и сохранить") : t("Остановить"), () => api("stop", +id).catch(fail), "danger");
+    if (p.info.kind === "session") add("cancel", I.trash(14), t("Отменить наблюдение"), () => cancelSession(+id), "danger");
   }
   ctxMenu(e, items, key => act[key]());
 });
@@ -400,10 +405,11 @@ window.addEventListener("keydown", e => {
 // Только по уже показанному: строки таблиц #main (текст ячеек и их подсказки - там полный текст
 // оператора). Перерисовка экрана (идущий запуск, наблюдение) - поиск повторяется сам.
 // Текст поиска F.q - общий для всех вкладок; показано ли окошко - у каждой вкладки свое (tab.find).
-// Пробелы, табуляции и переводы строк при сравнении равны одному пробелу: текст, скопированный из
-// сокращенного начала оператора, находится и в полном, и наоборот.
+// Поиск - скрытое регулярное выражение (findRe): пробельные символы подряд (пробел, табуляция, переводы
+// строк) - любое их число, регистр не важен. Текст, скопированный из сокращенного начала оператора
+// (переводы строк там - пробелы), находится и в полном тексте, и в редакторе SQL.
 const F = {box: null, hits: [], i: -1, obs: null, timer: 0, q: "", anchor: null};
-const findNorm = s => s.toLowerCase().replace(/\s+/g, " ").trim();
+const findRe = (q, g = "") => { q = q.trim(); return q ? new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"), "i" + g) : null; };
 function findOpen(focus = true) {
   if (!F.box) {
     F.box = document.createElement("div");
@@ -440,16 +446,14 @@ function findMark(hits) {
 }
 function findRun() {
   if (!F.box) return;
-  const q = findNorm(F.q);
+  const q = findRe(F.q);
   const rows = q ? [...document.querySelectorAll("#main tbody tr, #main .trow")] : [];
   // строка, по оператору которой кликнули (F.anchor), становится текущим совпадением
   const cur = F.anchor && F.anchor.isConnected ? F.anchor : F.hits[F.i], ta = $("#code");
   F.anchor = null;
   if (ta) {                                         // редактор SQL: совпадения - позиции в тексте
-    F.hits = [];
-    const s = ta.value.toLowerCase(), eq = F.q.trim().toLowerCase();
-    for (let k = eq ? s.indexOf(eq) : -1; k >= 0; k = s.indexOf(eq, k + 1)) F.hits.push(k);
-  } else F.hits = rows.filter(r => findNorm(r.textContent + " " + [...r.querySelectorAll("[title]")].map(x => x.title).join(" ")).includes(q));
+    F.hits = q ? [...ta.value.matchAll(findRe(F.q, "g"))].filter(m => m[0]).map(m => [m.index, m[0].length]) : [];      // [начало, длина]
+  } else F.hits = rows.filter(r => q.test(r.textContent + " " + [...r.querySelectorAll("[title]")].map(x => x.title).join(" ")));
   findMark(ta ? [] : F.hits);
   const at = F.hits.indexOf(cur);
   F.i = at >= 0 ? at : Math.min(F.i, F.hits.length - 1);      // после перерисовки - та же позиция
@@ -465,9 +469,9 @@ function findGo(d, typing) {
   F.i = (F.i + d + F.hits.length) % F.hits.length;
   const ta = $("#code");
   if (ta) {             // выделение в редакторе видно только с фокусом: фокус уходит в текст, F3 ищет дальше
-    const k = F.hits[F.i], lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+    const [k, len] = F.hits[F.i], lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
     if (!typing) ta.focus();      // при вводе в поле поиска фокус остается в поле
-    ta.setSelectionRange(k, k + F.q.trim().length);
+    ta.setSelectionRange(k, k + len);
     ta.scrollTop = Math.max(0, (ta.value.slice(0, k).split("\n").length - 6) * lh);
     ta.dispatchEvent(new Event("keyup"));         // номер строки в статусе
     findRun();
@@ -478,13 +482,15 @@ function findGo(d, typing) {
   findRun();
   r.scrollIntoView({block: "center"});
 }
-// Клик по оператору в таблице (ячейка с data-op), пока окошка поиска нет: «объект:строка» уходит в
-// поиск, окошко открывается без фокуса, строка клика - текущее совпадение (прокрутка не меняется).
-// При выделении текста мышью поиск не трогается.
+// Клик по оператору в таблице (ячейка с data-op), пока окошка поиска нет: в поиск уходит начало текста
+// оператора (первые FIND_HEAD символов подсказки ячейки; нет текста - «объект:строка»), окошко открывается
+// без фокуса, строка клика - текущее совпадение (прокрутка не меняется). При выделении мышью - ничего.
+const FIND_HEAD = 30;
 document.addEventListener("click", e => {
   const td = e.target.closest && e.target.closest("#main td[data-op]");
   if (!td || F.box || !td.dataset.op || String(window.getSelection() || "")) return;
-  F.q = td.dataset.op;
+  const head = (td.title || td.dataset.qtip || "").replace(/\s+/g, " ").trim();
+  F.q = head ? head.slice(0, FIND_HEAD).trim() : td.dataset.op;
   F.anchor = td.closest("tr");
   findOpen(false);
 });
@@ -509,16 +515,57 @@ async function poll() {
   for (const x of r.events) {
     const p = S.procs[x.proc];
     if (!p) continue;
-    p.events.push(x.ev);
+    evAdd(p, x.ev);
     if (x.ev.event === "exit") { ended = true; onExit(p); }
-    if (x.ev.event === "flush" && S.view.k === "session" && S.view.pid === x.proc) loadSessionTables(p);
+    // пауза наблюдения: файлы не читаются, только кольцо начинает новый отсчет
+    if (x.ev.event === "flush" && S.view.k === "session" && S.view.pid === x.proc) S.live.paused ? sessRing(p) : loadSessionTables(p);
   }
   S.seq = r.seq;
   if (r.events.length) updateLive();
   if (ended) refresh();
 }
+// События процесса в памяти. Операторы, ожидания и строки журнала за часы наблюдения или запуска в цикле -
+// сотни тысяч, поэтому их хранится только последние EV_KEEP каждого вида (EV_GROUP); что нужно за все
+// время, копится при получении: полоса ожиданий (p.wacc), «прошлый» (p.dur → e.prev). У события номер e.n:
+// экраны дорисовывают события после последнего показанного номера (индекс в списке съехал бы при чистке).
+const EV_KEEP = 500, EV_GROUP = {statement: "now", wait: "now", idle: "now", log: "log", message: "log", slow: "slow"};
+function evAdd(p, e) {
+  e.n = p.n = (p.n || 0) + 1;
+  p.events.push(e);
+  if (e.event === "start") p.profile = e.profile;
+  waitFold(p.wacc ||= {m: new Map(), cur: null, t0: 0}, e);
+  if (e.event === "statement" || e.event === "idle" || (e.event === "batch" && !p.profile)) {
+    const d = p.dur ||= {}, last = p.lastOp;
+    if (last) d[opKey(last)] = evMs(e) - evMs(last);       // прежний оператор закончился
+    p.lastOp = e.event === "idle" ? null : e;
+    if (e.event !== "idle") e.prev = d[opKey(e)];
+  }
+  const g = EV_GROUP[e.event], cnt = p.cnt ||= {};
+  if (g && (cnt[g] = (cnt[g] || 0) + 1) > 2 * EV_KEEP) {   // чистка раз в EV_KEEP событий вида
+    let cut = cnt[g] - EV_KEEP;
+    p.events = p.events.filter(x => !(cut > 0 && EV_GROUP[x.event] === g && cut--));
+    cnt[g] = EV_KEEP;
+  }
+}
 function onExit(p) {
   const i = p.info, v = S.view;
+  // неактивные вкладки с экраном этого процесса: их обновления не находят, и экран «Идет запуск» оставался
+  // с бегущим таймером, как зависший. Вкладка переходит на итог сразу и рисуется заново при возврате.
+  const st = p.events.find(e => e.event === "start"), cancelled = S.cancelled[i.id];
+  const next = i.kind === "run" ? (i.report ? {k: "result", report: baseName(i.report)} : null)
+    : i.kind === "session" ? (cancelled ? {k: "empty"} : st && st.folder ? {k: "sessiondone", folder: baseName(st.folder)} : null) : null;
+  for (const tab of T.list) {
+    if (tab === T.cur || !tab.view || tab.view.k !== i.kind || tab.view.pid !== i.id) continue;
+    if (next) tab.view = next;
+    tab.stale = true;
+  }
+  if (cancelled) {          // «Отменить наблюдение»: папка - в корзину, когда процесс ее закрыл
+    delete S.cancelled[i.id];
+    if (st && st.folder) api("delete_session", baseName(st.folder)).then(refresh, fail);
+    if (v.k === "session" && v.pid === i.id) go({k: "empty"}, true);
+    toast(t("Наблюдение отменено"));
+    return;
+  }
   if (i.kind === "run") {
     // заметка, написанная во время запуска, сохраняется к отчету: его имя известно только теперь
     const note = S.runNotes[i.id], open = v.k === "run" && v.pid === i.id;
@@ -537,6 +584,11 @@ function onExit(p) {
   if (i.kind === "run") toast(i.code === 0 ? t("{name}: запуск завершен", {name: i.title}) : t("{name}: запуск завершен с кодом {code}", {name: i.title, code: i.code}));
   if (S.autodetect && S.autodetect.pid === i.id) autodetectDone(i);
   notifyDone(p);
+}
+function cancelSession(pid) {
+  if (!confirm(t("Отменить наблюдение? Собранное будет удалено (в корзину)."))) return;
+  S.cancelled[pid] = true;
+  api("stop", pid).catch(fail);
 }
 // уведомление Windows (§5.17): запуск или наблюдение шло дольше 30 с, а окно CompareQuery не активно
 async function notifyDone(p) {
@@ -752,7 +804,7 @@ async function setReference(report) {
 }
 async function chooseFolder() {
   try {
-    if (!window.pywebview) {
+    if (window.CQ_DEV) {         // в браузере нет системного окна выбора папки
       modal(`<div class="dlg" style="width:520px"><div class="dh"><h2>${t("Рабочая папка")}</h2></div><div class="db"><input class="inp" id="fld" value="${h(S.st.folder)}"></div>
         <div class="df"><a class="btn" onclick="closeModal()">${t("Отмена")}</a><a class="btn pri" onclick="setFolder($('#fld').value)">${t("Выбрать")}</a></div></div>`);
       return;
@@ -985,14 +1037,36 @@ async function saveConn() {
   const c = window._cn, cs = $("#cs").value.trim();
   if (!cs) { toast(t("Введите строку подключения"), true); return; }
   try {
+    const was = connKey(), wasDbms = dbms().name;
     await api("save_connection", c.sel, cs, $("#lg").value, connPw(), true, null);
     await api("set_gui", "diff_tool", $("#dt").value.trim());
     await api("set_gui", "notify", $("#nt").classList.contains("on"));
     closeModal();
     toast(t("Настройки сохранены"));
     await refresh();
+    if (connKey() !== was) connChanged(dbms().name !== wasDbms);
     if (S.view.k === "empty") renderMain();       // текст «Для начала задайте подключения…» уходит
   } catch (e) { fail(e); }
+}
+// Смена активного подключения (сервер, база, логин, СУБД). Экраны с данными сервера (CONN_VIEWS) во всех
+// вкладках открываются заново, без отборов прежнего сервера: база в фильтрах - база нового подключения;
+// в «Назад» - так же. При смене СУБД (MS SQL Server ↔ PostgreSQL) заново и скрипт - параметры запуска
+// (--explain есть не у всех), если текст не изменен. Идущие запуски и наблюдения остаются на своем
+// подключении (у процесса CLI свое), их экраны и итоги - по файлам, не трогаются.
+const CONN_VIEWS = ["current", "load", "dbinfo", "newsession"];
+const connKey = () => { const c = S.st.connection || {}; return c.connection_string + "\n" + c.login; };
+function connChanged(dbmsChanged) {
+  if (S.load) S.load.db = null;          // базы «Нагрузки сервера» и «Базы данных» - общие для вкладок
+  if (S.dbi) S.dbi.db = null;
+  for (const tab of T.list) {
+    const cur = tab === T.cur, v = cur ? S.view : tab.view, live = cur ? S.live : tab.live;
+    for (const x of cur ? S.history : tab.history) if (CONN_VIEWS.includes(x.view.k)) x.view = {k: x.view.k};
+    const ta = (cur ? $("#main") : tab.node)?.querySelector("#code");
+    if (v.k === "script" ? !dbmsChanged || (ta && ta.value !== live.saved) : !CONN_VIEWS.includes(v.k)) continue;
+    const nv = v.k === "script" ? v : {k: v.k};
+    if (cur) { S.view = nv; S.live = {}; renderMain(); } else { tab.view = nv; tab.stale = true; }
+  }
+  renderSide();
 }
 // Подключений нет (§3): активное - из примера CLI (localhost, master, sa), в списке нет других. Баллон
 // у кнопки подключения при запуске и при попытке нажать «Новый скрипт», «Наблюдать сессию», «Текущие
@@ -1464,6 +1538,7 @@ function tick() {
   const now = Date.now();
   etaTick(now);
   if (qtipEl && !qtipEl.isConnected) qtipHide();      // элемент с подсказкой перерисован (таблица раз в 4 с)
+  if (S.live.wbar && now - (S.live.wbarAt || 0) > 2000) { S.live.wbarAt = now; S.live.wbar(); }    // полоса идущего запуска
   document.querySelectorAll("[data-t0]").forEach(el => {
     const t1 = el.dataset.t1 ? +el.dataset.t1 : now;
     el.textContent = clock(t1 - +el.dataset.t0, true);
@@ -1491,13 +1566,14 @@ function viewRun(m, v) {
     </section>
     <section class="stack" id="r-stack"></section>
     <section class="kpis">${kpiBox("k-t", "Время", "мс")}${kpiBox("k-c", "CPU", "мс")}${kpiBox("k-r", "Логических чтений")}${kpiBox("k-n", "Таблиц получено")}${slowBox("k-slow", null, true)}</section>
+    <section class="card wcard" id="r-waits" style="display:none"></section>
     <section class="card tw${tcolCls("journal")}">${tcolBtn("journal")}<div class="tbar"><h2>${t("Журнал")}</h2><span class="lbl">${t("ход выполнения и сообщения SQL (PRINT, RAISERROR, ошибки) · время сервера · новые строки снизу")}</span></div>
       <div class="logbox" id="r-log"></div></section>`;
-  S.live = {cards: [], log: 0};
+  S.live = {cards: []};
   updateLive();
 }
-function opcHtml(title, text, t0) {      // карточка оператора или батча в стопке (§5.10)
-  return `<div class="oph"><span class="lbl now">${t("Сейчас выполняется")}</span><span class="wbox"></span><span class="tm optm" data-t0="${t0}"></span></div>
+function opcHtml(title, text, t0, prev) {      // карточка оператора или батча в стопке (§5.10)
+  return `<div class="oph"><span class="lbl now">${t("Сейчас выполняется")}</span><span class="wbox"></span>${optmHtml(t0, prev)}</div>
       <div class="opb"><div class="opn">${title}</div><div class="opx" title="${h(text)}">${h(text)}</div></div>`;
 }
 // Стопка «Сейчас выполняется» (§5.10): текущая карточка, прошлая и позапрошлая, тающая маской.
@@ -1506,6 +1582,17 @@ function opcHtml(title, text, t0) {      // карточка оператора 
 // резко, затем плавно обратно, flashMs; только внутри своей рамки, поэтому прежнюю не красит, а пока
 // прежняя ее накрывает, вспышки не видно - она начинается с задержкой flashDelay). Пока карточка не простояла holdMs, пришедшие ждут;
 // показывается последняя из них (быстрые операторы пропускаются, они есть в журнале и реестре).
+// «прошлый»: сколько тот же оператор (батч) шел в прошлый раз в этом же запуске или наблюдении - циклы,
+// повторные вызовы процедуры, следующие прогоны. Считается при получении событий (evAdd; журнал на диске
+// обновляется только раз в 10 с): длительность - от события оператора до следующего, как у остановленного
+// таймера. Короче PREV_MIN_MS не показывается.
+const PREV_MIN_MS = 300;
+// ключ - без текста: объект и строка оператора однозначны, а тяжелые тексты в словаре не нужны; записей -
+// столько, сколько разных операторов, повторы (цикл 1000 раз) перезаписывают свою
+const opKey = e => e.event === "batch" ? "batch " + e.k : e.object + ":" + e.line;
+function optmHtml(t0, prev) {
+  return `<span class="optw"><span class="tm optm" data-t0="${t0}"></span>${prev >= PREV_MIN_MS ? `<span class="opprev">${t("прошлый")} ${clock(prev, true)}</span>` : ""}</span>`;
+}
 const STK = {gap: 12, flashMs: 500, flashDelay: 120, settleMs: 450, holdMs: 350};
 const slotTop = (k, s) => s * (k.h + STK.gap);
 function stackShow(el, slots) {
@@ -1609,33 +1696,35 @@ function updateRun(p) {
     }
   }
   // текущая работа: операторы (--profile) или батчи
-  const items = ev.filter(e => e.event === "statement" || e.event === "idle" || (!start?.profile && e.event === "batch"));
-  while (L.cards.length < items.length) {
-    const e = items[L.cards.length], prev = L.cards[L.cards.length - 1];
+  const items = ev.filter(e => e.n > (L.n || 0) && (e.event === "statement" || e.event === "idle" || (!start?.profile && e.event === "batch")));
+  for (const e of items) {
+    L.n = e.n;
+    L.stmt = e;
+    const prev = L.cards[L.cards.length - 1];
     if (prev) finishCard(prev, evMs(e));
+    if (L.cards.length > 4) L.cards.shift();      // показано не больше трех: прежние больше не нужны
     if (e.event === "idle") { L.cards.push(null); continue; }
     const el = document.createElement("div");
     el.className = "opc";
     const title = e.event === "batch" ? `${t("Батч {k}", e)} <span>${t("из {of}", e)}${e.ignored ? " · " + t("служебный") : ""}</span>` : `${h(e.object)} <span>${t("строка {n}", {n: e.line})}</span>`;
     const text = e.text;      // у batch - начало батча (CLI делит файл сам: GO у MS SQL Server, ";" у PostgreSQL)
-    el.innerHTML = opcHtml(title, text, evMs(e));
+    el.innerHTML = opcHtml(title, text, evMs(e), e.prev);
     L.cards.push(el);
     if (e.wait) setWait(el, e.wait, e.blocked_by, evMs(e));
     stackShow(el, start?.profile ? 3 : Math.min(3, e.of || 3));
   }
   const cur = L.cards[L.cards.length - 1];
   if (cur) {                             // ожидание текущего оператора (§5.8); карточка может ждать показа
-    const lastStmt = items[items.length - 1];
-    const waits = ev.filter(e => e.event === "wait" && evMs(e) >= evMs(lastStmt));
+    const waits = ev.filter(e => e.event === "wait" && evMs(e) >= evMs(L.stmt));
     const w = waits[waits.length - 1];
     if (w && w !== L.lastWait) { L.lastWait = w; setWait(cur, w.wait, w.blocked_by, evMs(w)); }
   }
   if (i.code !== null && cur) finishCard(cur, Date.now());
   // журнал: строки CompareQuery и сообщения SQL в порядке поступления, время сервера
-  const logs = ev.filter(e => e.event === "log" || e.event === "message"), box = $("#r-log");
-  if (box && logs.length > L.log) {
+  const logs = ev.filter(e => e.n > (L.logN || 0) && (e.event === "log" || e.event === "message")), box = $("#r-log");
+  if (box && logs.length) {
     const bottom = box.scrollHeight - box.scrollTop - box.clientHeight < 30;   // прокрутка вниз, если журнал внизу
-    for (const e of logs.slice(L.log)) {
+    for (const e of logs) {
       const d = document.createElement("div");
       if (e.event === "message") {
         d.className = "logl msg" + (e.error ? " err" : "");
@@ -1646,8 +1735,15 @@ function updateRun(p) {
       }
       box.appendChild(d);
     }
-    L.log = logs.length;
+    L.logN = logs[logs.length - 1].n;
+    // на экране - последние EV_KEEP строк (PRINT в цикле); все - в журнале запуска (_message.txt)
+    while (box.childElementCount > EV_KEEP) box.firstChild.remove();
     if (bottom) box.scrollTop = box.scrollHeight;
+  }
+  if (start && start.profile) {          // полоса ожиданий по событиям; пока идет - и по таймеру (tick)
+    const ex = ev.find(e => e.event === "exit");
+    L.wbar = () => liveWaits("r-waits", evWaitItems(p, ex ? evMs(ex) : Date.now()));
+    L.wbar();
   }
   if (i.code !== null && L.eta) { L.eta = null; const e = $("#r-eta"); if (e) e.textContent = ""; }
   if (i.code !== null) {
@@ -1655,6 +1751,16 @@ function updateRun(p) {
     $("#r-chip").innerHTML = i.code === 0 ? t("завершен") : t("завершен с кодом {code}", {code: i.code});
     $("#r-stop").setAttribute("disabled", "");
   }
+}
+// плашка с полосой ожиданий идущего запуска или наблюдения: перерисовывается, только если изменилась
+function liveWaits(id, items) {
+  const el = $("#" + id);
+  if (!el) return;
+  const html = waitBarHtml(items);
+  if (el._html === html) return;
+  el._html = html;
+  el.innerHTML = html;
+  el.style.display = html ? "" : "none";
 }
 function finishCard(el, end) {           // end - время окончания (мс); имя не t: t() - перевод
   if (!el || el.classList.contains("done")) return;
@@ -1734,7 +1840,7 @@ async function viewResult(m, v) {
     <section class="card tw${tcolCls("results")}">${tcolBtn("results")}<div class="tbar"><h2>${t("Таблицы результата")}</h2></div>${tables}</section>
     ${r.journal && r.journal.length ? journalCard(r.journal) : ""}
     ${r.aborted ? "" : lineCard(r)}
-    ${r.registry ? tableCard("reg", t("Реестр операторов"), (r.run["Прогонов"] > 1 ? t("медиана прогонов 2–{n}", {n: r.run["Прогонов"]}) : "") + " · registry.csv", REG_COLS, r.registry, r.registry_dir + "\\registry.csv", r.registry_dir, "reg") : ""}
+    ${r.registry ? tableCard("reg", t("Реестр операторов"), (r.run["Прогонов"] > 1 ? t("медиана прогонов 2–{n}", {n: r.run["Прогонов"]}) : "") + " · registry.csv", REG_COLS, r.registry, r.registry_dir + "\\registry.csv", r.registry_dir, "reg", "", 0, waitBarHtml(regWaitItems(r.registry))) : ""}
     ${r.log ? tableCard("log", t("Журнал выполнения"), "log.csv", LOG_COLS, linkLog(r.log, r.registry || []), r.registry_dir + "\\log.csv", r.registry_dir, "log", "", LOG_COLLAPSE) : ""}
     ${(r.extra_tables || []).map(x => extraCard(x, r.registry_dir)).join("")}`;
   const lb = m.querySelector(".logbox");       // журнал - на последних строках
@@ -2019,7 +2125,7 @@ const colsBtn = (kind, ref) => `<span class="ib" title="${t("Колонки: п�
 
 // collapseOver - свернута по умолчанию, если строк больше (журнал: не грузить страницу); строки свернутой
 // таблицы строятся при разворачивании. У строк реестра с файлами текста и плана - кнопки в начале строки
-function tableCard(id, title, note, allCols, rows, file, dir, kind, extra, collapseOver) {
+function tableCard(id, title, note, allCols, rows, file, dir, kind, extra, collapseOver, top) {     // top - HTML над таблицей
   setTimeout(() => {
     const el = document.getElementById("tw-" + id);
     if (!el) return;
@@ -2050,7 +2156,7 @@ function tableCard(id, title, note, allCols, rows, file, dir, kind, extra, colla
       <span class="ib" title="${t("Показать в папке")}" onclick="api('show_in_folder', ${h(JSON.stringify(file))})">${I.folder(15)}</span>
       <span class="ib" title="${t("Открыть CSV")}" onclick="api('open_path', ${h(JSON.stringify(file))}).catch(fail)">${I.open(15)}</span>
       <span class="ib" title="${t("Колонки: показать или скрыть")}" onclick="colsDialog(${h(JSON.stringify(kind))}, document.getElementById('tw-${id}')._keys, ${titles}, document.getElementById('tw-${id}')._render)">${I.cols(15)}</span></div>
-    <div class="tscroll"></div><div class="tmore"></div></section>`;
+    ${top || ""}<div class="tscroll"></div><div class="tmore"></div></section>`;
 }
 // Остальные таблицы папки реестра (PostgreSQL): операторы внутри функций (--explain), функции и таблицы
 // (--profile). Колонки - из заголовка файла: числовые - по значениям; «План» - кнопкой в начале строки.
@@ -2219,7 +2325,7 @@ async function viewCompare(m, v) {
   const file = v.report ? S.st.folder + "\\" + v.report : p.info.report;      // файл сравнения: готовый или только что сделанный
   let d = null, txt = {full: ""};
   if (file) {
-    try { [d, txt] = await Promise.all([api("compare_details", file, v.a, v.b), api("compare_text", file)]); } catch (e) { fail(e); }
+    try { [d, txt] = await Promise.all([api("compare_details", file, v.a, v.b, !!v.allOps), api("compare_text", file)]); } catch (e) { fail(e); }
   }
   if (S.view !== v) return;
   if (!d) {
@@ -2252,11 +2358,8 @@ async function viewCompare(m, v) {
   const same = d.tables.filter(tb => tb.state === "идентична");
   const sameCard = same.length ? `<section class="card tw${tcolCls("cmpsame", true)}">${tcolBtn("cmpsame")}<div class="tbar"><h2>${t("Идентичные таблицы")}</h2><span class="lbl">${nf(same.length)}</span></div><div>${same.map(tb => `<div class="trow"><h2 style="min-width:110px">${t("Таблица {n}", {n: tb.n})}</h2><span class="chip c-ok">${t("идентична")}</span><span class="lbl">${h(tb.lines[0] || "")}</span></div>`).join("")}</div></section>` : "";
   const st = d.statements;
-  // операторы - srvTable (вид "cmp": колонки, порядок, сортировка)
-  const stCols = cmpStCols(refA);
-  S.live.cmp = {sort: null, render: () => { const b = $("#cmp-body"); if (b) { b.innerHTML = srvTable("cmp", stCols, st); hbar(b); } }};
-  const stmts = st === null ? "" : `<section class="card tw${tcolCls("cmp")}">${tcolBtn("cmp")}<div class="tbar"><h2>${t("Значимые изменения операторов")}</h2><span class="lbl">${t("от 20% и от 1 000 мс")}</span></div>
-    ${st.length ? `<div class="acts">${colsBtn("cmp", "S.live.cmp")}</div><div class="tscroll" id="cmp-body"></div>` : ""}${d.statement_notes.length ? `<div class="dsum">${d.statement_notes.map(x => `<span>${h(x)}</span>`).join("")}</div>` : ""}</section>`;
+  // операторы - srvTable (вид "cmp": колонки, порядок, сортировка), полосы ожиданий, «только значимые»
+  const stmts = st === null ? "" : cmpStmtsCard(d, {refA, reload: all => api("compare_details", file, v.a, v.b, all)});
   m.innerHTML = head(acts) +
     (d.why ? `<div class="card verdict v-none"><span class="ic">≁</span><span style="display:flex;flex-direction:column;gap:3px"><span style="font-size:17px;font-weight:700">${t("Запуски несравнимы")}</span><span class="lbl">${h(d.why)} · ${t("сравнение выполнено по просьбе")}</span></span></div>` : "") +
     `<div style="display:flex;flex-wrap:wrap;gap:16px">${dataV}${timeV}</div>` +
@@ -2278,6 +2381,41 @@ async function viewCompare(m, v) {
   }
 }
 
+// Карточка «Значимые изменения операторов» экранов сравнения запусков и наблюдений (§4.2, §4.3):
+// - две полосы долей ожиданий в одном масштабе: сверху B (новый, «этот»), снизу A (★ - опорный); у кого
+//   меньше времени, та полоса короче;
+// - переключатель «только значимые» (по умолчанию включен): выключен - фраза отбора зачеркнута, все пары
+//   операторов, первые STMT_ALL_TOP по модулю разницы (тот же API с all_ops; без реестров переключателя нет);
+// - таблица (вид "cmp", srvTable). o: {refA, sess, star (A опорный), reload(all) -> ответ API}.
+function cmpStmtsCard(d, o) {
+  const st = d.statements, stCols = cmpStCols(o.refA, o.sess);
+  S.live.cmp = {sort: (S.live.cmp || {}).sort || null, card: o, render: () => { const b = $("#cmp-body"); if (b) { b.innerHTML = srvTable("cmp", stCols, st); hbar(b); } }};
+  let bars = "";
+  if (d.waits) {
+    const ia = regWaitItems(d.waits[0]), ib = regWaitItems(d.waits[1]), ta = waitTotal(ia), tb = waitTotal(ib), mx = Math.max(ta, tb);
+    // значки одной ширины (.wic), чтобы обе полосы начинались с одного пикселя: B - «новый», A - ★ опорного
+    const ref = o.refA || o.star;
+    const icB = ref ? `<span class="wic" title="${h(o.sess ? t("Новое (B)") : t("Новый (B)"))}">${I.spark(16)}</span>` : `<span class="wic ab" title="B">B</span>`;
+    const icA = ref ? `<span class="wic" title="${o.sess ? t("Опорное (A)") : t("Опорный (A)")}">${I.star(16, true)}</span>` : `<span class="wic ab" title="A">A</span>`;
+    if (mx > 0) bars = `<div class="wpair">${waitBarHtml(ib, {scale: tb / mx, icon: icB}) || `<div class="wrow">${icB}<span class="pale" style="font-size:12px;padding-bottom:10px">${t("нет данных")}</span></div>`}${waitBarHtml(ia, {scale: ta / mx, icon: icA}) || `<div class="wrow">${icA}<span class="pale" style="font-size:12px;padding-bottom:10px">${t("нет данных")}</span></div>`}</div>`;
+  }
+  const all = !!d.all, sw = d.count == null ? "" : `<span class="sw sm${all ? "" : " on"}" title="${t("Только значимые изменения; выключить — все операторы (первые {n} по разнице)", {n: 500})}" onclick="cmpAllToggle(this)"></span>`;
+  const phrase = `<span class="lbl cmpsig">${sw}<span class="${all ? "off" : ""}">${t("от 20% и от 1 000 мс")}</span>${all ? ` · ${d.count > st.length ? t("первые {n} из {of} по разнице", {n: nf(st.length), of: nf(d.count)}) : t("все операторы: {n}", {n: nf(d.count)})}` : ""}</span>`;
+  return `<section class="card tw${tcolCls("cmp")}" id="cmp-card">${tcolBtn("cmp")}<div class="tbar"><h2>${t("Значимые изменения операторов")}</h2>${phrase}</div>
+    ${bars}${st.length ? `<div class="acts">${colsBtn("cmp", "S.live.cmp")}</div><div class="tscroll" id="cmp-body"></div>` : `<div class="empty">${t("нет")}</div>`}${(d.statement_notes || []).length ? `<div class="dsum">${d.statement_notes.map(x => `<span>${h(x)}</span>`).join("")}</div>` : ""}</section>`;
+}
+async function cmpAllToggle(sw) {
+  const L = S.live.cmp, v = S.view, all = sw.classList.contains("on");      // был включен - станут все
+  if (!L || sw.dataset.busy) return;
+  sw.dataset.busy = "1";
+  sw.classList.toggle("on");
+  let d;
+  try { d = await L.card.reload(all); } catch (e) { fail(e); sw.classList.toggle("on"); delete sw.dataset.busy; return; }
+  if (S.view !== v || !$("#cmp-card")) return;
+  v.allOps = all;               // переживает возврат на экран
+  $("#cmp-card").outerHTML = cmpStmtsCard(d, L.card);
+  if (d.statements.length) S.live.cmp.render();
+}
 // Колонки таблицы значимых изменений операторов (вид "cmp"): сравнение запусков и наблюдений.
 // runs - у наблюдений: число запусков оператора и время на запуск (циклы, позднее подключение).
 function cmpStCols(refA, runs) {
@@ -2286,15 +2424,23 @@ function cmpStCols(refA, runs) {
   const fb = (f, side) => [f && f[0] ? textActs(f[0], t("Текст оператора") + " · " + side) : `<span class="ib off"></span>`,
     f && f[1] ? `<span class="ib" title="${t("План")} · ${h(side)}" onclick="api('open_path', ${h(JSON.stringify(f[1]))}).catch(fail)">${I.plan(14)}</span>` : `<span class="ib off"></span>`].join("");
   const sideA = refA ? t("Опорный") : "A", sideB = refA ? t("Этот") : "B";
+  // сравнение текста оператора A и B во внешней программе (только текст, временные файлы); оператор только
+  // с одной стороны - кнопки нет. Стоит третьей в первой колонке - между парами «текст, план» A и B.
+  const cmpBtn = x => x.files_a && x.files_a[0] && x.files_b && x.files_b[0]
+    ? `<span class="ib" title="${t("Сравнить текст оператора ({a} ↔ {b}) в программе сравнения", {a: sideA, b: sideB})}" onclick="api('run_diff', 'stmt', ${h(JSON.stringify([x.files_a[0], x.files_b[0]]))}).catch(fail)">${I.diff(14)}</span>` : `<span class="ib off"></span>`;
+  const waitCell = v => { const w = /^(.*) \((\d+) мс\)$/.exec(v || ""); return `<td>${w ? `${waitHtml(w[1])}<span class="sv wi">${nf(w[2])} ${t("мс")}</span>` : '<span class="pale">—</span>'}</td>`; };
+  const dw = x => x.waits_a == null && x.waits_b == null ? null : (x.waits_b || 0) - (x.waits_a || 0);
   const cols = [
-    [null, ["{x}", {x: sideA}], null, x => `<td class="acts2 tight">${fb(x.files_a, sideA)}</td>`],
+    [null, ["{x}", {x: sideA}], null, x => `<td class="acts2 tight">${fb(x.files_a, sideA)}${cmpBtn(x)}</td>`],
     [null, ["{x}", {x: sideB}], null, x => `<td class="acts2 tight">${fb(x.files_b, sideB)}</td>`],
     ["op", "Оператор", "", x => `<td class="op wide b" style="min-width:300px" data-op="${h(x.label)}:${x.line}" title="${h(x.text || "")}"><span class="opl"><span>${h(x.label)}:${x.line}${x.note ? ` <span class="pale" style="font-weight:500">${h(x.note.trim())}</span>` : ""}</span></span><span class="sv">${h(x.text || "")}</span></td>`, x => `${x.label}:${String(x.line).padStart(7, "0")}`],
     ["a", ["{x}<br>мс", {x: refA ? t("Опорный") : "A"}], "n", x => `<td class="n">${nf(x.a)}${x.a >= 1000 ? `<span class="sv">${dur(x.a)}</span>` : ""}</td>`],
     ["b", ["{x}<br>мс", {x: refA ? t("Этот") : "B"}], "n", x => `<td class="n">${nf(x.b)}${x.b >= 1000 ? `<span class="sv">${dur(x.b)}</span>` : ""}</td>`],
     ["d", "Разница<br>мс", "n", x => { const dd = x.b - x.a; return `<td class="n b" style="color:${delta(x)}">${dd > 0 ? "+" : dd < 0 ? "−" : ""}${nf(Math.abs(dd))}</td>`; }, x => x.b - x.a],
     ["pct", "Разница<br>%", "n", x => `<td class="n" style="color:${delta(x)}">${h(x.pct.replace("-", "−"))}</td>`, x => parseFloat(x.pct) || 0],
-    ["wait", ["Ожидание ресурсов<br>1 место ({x})", {x: refA ? t("этот") : "B"}], "", x => { const w = /^(.*) \((\d+) мс\)$/.exec(x.wait || ""); return `<td>${w ? `${waitHtml(w[1])}<span class="sv wi">${nf(w[2])} ${t("мс")}</span>` : '<span class="pale">—</span>'}</td>`; }]];
+    ["dw", "Разница<br>ожиданий мс", "n", x => { const v = dw(x); return v === null ? `<td class="n"></td>` : `<td class="n" style="color:${v < 0 ? "#1F55A8" : "#9A4A07"}" title="${t("Ожидания блокировок и ресурсов: {b} мс против {a} мс", {b: nf(x.waits_b || 0), a: nf(x.waits_a || 0)})}">${v > 0 ? "+" : v < 0 ? "−" : ""}${nf(Math.abs(v))}</td>`; }, x => dw(x) ?? 0],
+    ["wait", ["Ожидание ресурсов<br>1 место ({x})", {x: refA ? t("этот") : "B"}], "", x => waitCell(x.wait)],
+    ["wait_a", ["Ожидание ресурсов<br>1 место ({x})", {x: refA ? t("опорный") : "A"}], "", x => waitCell(x.wait_a)]];
   if (runs) cols.splice(7, 0, ["runs", "Запусков", "n", x => `<td class="n">${nf(x.runs_a)} → ${nf(x.runs_b)}${x.runs_a && x.runs_b ? `<span class="sv">${nf(Math.round(x.a / x.runs_a))} → ${nf(Math.round(x.b / x.runs_b))} ${t("мс на запуск")}</span>` : ""}</td>`, x => x.runs_b - x.runs_a]);
   return cols;
 }
@@ -2316,7 +2462,7 @@ async function viewSessionCompare(m, v) {
   if (!p || p.info.running) { m.innerHTML = head() + `<div class="card empty"><span class="pulse"></span> ${t("Сравнение идет…")}</div>`; return; }
   let d = null, txt = {full: ""};
   if (p.info.report && p.info.code === 0) {
-    try { [d, txt] = await Promise.all([api("session_compare_details", v.a, v.b), api("compare_text", p.info.report)]); } catch (e) { fail(e); }
+    try { [d, txt] = await Promise.all([api("session_compare_details", v.a, v.b, !!v.allOps), api("compare_text", p.info.report)]); } catch (e) { fail(e); }
   }
   if (S.view !== v) return;
   if (!d) {
@@ -2342,10 +2488,8 @@ async function viewSessionCompare(m, v) {
   S.live.cmpobj = {sort: null, render: () => { const b = $("#cmpobj-body"); if (b) { b.innerHTML = srvTable("cmpobj", objCols, d.objects); hbar(b); } }};
   const objs = `<section class="card tw${tcolCls("cmpobj")}">${tcolBtn("cmpobj")}<div class="tbar"><h2>${t("Время по объектам")}</h2><span class="lbl">${t("работает и при другом алгоритме внутри объекта")}</span></div>
     ${d.objects.length ? `<div class="acts">${colsBtn("cmpobj", "S.live.cmpobj")}</div><div class="tscroll" id="cmpobj-body"></div>` : `<div class="empty">${t("нет")}</div>`}</section>`;
-  const st = d.statements, stCols = cmpStCols(false, true);
-  S.live.cmp = {sort: null, render: () => { const b = $("#cmp-body"); if (b) { b.innerHTML = srvTable("cmp", stCols, st); hbar(b); } }};
-  const stmts = `<section class="card tw${tcolCls("cmp")}">${tcolBtn("cmp")}<div class="tbar"><h2>${t("Значимые изменения операторов")}</h2><span class="lbl">${t("от 20% и от 1 000 мс")}</span></div>
-    ${st.length ? `<div class="acts">${colsBtn("cmp", "S.live.cmp")}</div><div class="tscroll" id="cmp-body"></div>` : `<div class="empty">${t("нет")}</div>`}</section>`;
+  const st = d.statements;
+  const stmts = cmpStmtsCard(d, {refA: false, sess: true, star: S.st.session_reference === v.a, reload: all => api("session_compare_details", v.a, v.b, all)});
   m.innerHTML = head(acts) + timeV + notesCard + objs + stmts +
     (txt.full ? `<section class="card tw${tcolCls("cmpfull", true)}">${tcolBtn("cmpfull")}<div class="tbar"><h2>${t("Полный отчет сравнения")}</h2></div><pre class="rep">${h(txt.full)}</pre></section>` : "");
   if (d.objects.length) S.live.cmpobj.render();
@@ -2749,6 +2893,68 @@ function waitTip(rows, k, tip, total) {     // подсказка группы: 
   return [t(tip), ...list.slice(0, WAIT_TIP_MAX).map(r => `${r.wait} — ${pct(r.time / total)}`),
     ...(list.length > WAIT_TIP_MAX ? [t("и еще {n}", {n: list.length - WAIT_TIP_MAX})] : [])].join("\n");
 }
+// Полоса долей ожиданий (§5.29) и легенда под ней: «Нагрузка сервера», реестры операторов, идущие запуск и
+// наблюдение, сравнения. На странице - в одном месте (копии с тем же значением путали бы). items -
+// [{wait, cat, time}] (cat - группа WAIT_GROUPS). В начале легенды жирно - доля и время всех ожиданий
+// (все, кроме CPU). opts.scale (0..1) - доля ширины: две полосы в одном масштабе (сравнение, меньше
+// времени - короче); opts.icon - значок перед полосой (чей запуск).
+function waitBarHtml(items, opts = {}) {
+  const sums = {}, total = items.reduce((a, r) => a + r.time, 0);
+  if (!(total > 0)) return "";
+  for (const r of items) sums[r.cat] = (sums[r.cat] || 0) + r.time;
+  const groups = WAIT_GROUPS.filter(([k]) => sums[k]), waited = total - (sums.cpu || 0);
+  const tip = (k, n, d) => h(t(n) + " " + pct(sums[k] / total) + "\n" + waitTip(items, k, d, total));
+  const html = `<div class="wbar"${opts.scale != null ? ` style="width:${Math.max(2, opts.scale * 100)}%"` : ""}>${groups.map(([k, n, d]) => `<span class="g-${k}" style="flex:${sums[k]}" title="${tip(k, n, d)}"></span>`).join("")}</div>
+    <div class="wleg"><span class="wsum" title="${t("Все ожидания, кроме CPU: доля от всего времени и время")}">${t("Ожидания {p}", {p: pct(waited / total)})} · =${clock(waited)}</span>${groups.map(([k, n, d]) => `<span title="${h(waitTip(items, k, d, total))}"><i class="g-${k}"></i>${t(n)} <b>${pct(sums[k] / total)}</b></span>`).join("")}</div>`;
+  return opts.icon ? `<div class="wrow">${opts.icon}<div class="wtrk">${html}</div></div>` : html;
+}
+const waitTotal = items => items.reduce((a, r) => a + r.time, 0);
+// Ожидания реестра операторов (строки registry.csv): CPU, блокировки, клиент и ожидания ресурсов по их
+// 1-3 местам у каждого оператора; остаток «Ожидания ресурсов» сверх трех мест - «прочие»
+function regWaitItems(rows) {
+  const m = new Map(), add = (wait, cat, ms) => {
+    if (!(ms > 0)) return;
+    const x = m.get(cat + "\n" + wait) || m.set(cat + "\n" + wait, {wait, cat, time: 0}).get(cat + "\n" + wait);
+    x.time += ms;
+  };
+  for (const r of rows || []) {
+    add("CPU", "cpu", +r["CPU мс"] || 0);
+    add(t("Ожидание блокировок"), "lock", +r["Ожидание блокировок мс"] || 0);
+    add(t("Ожидание клиента"), "net", +r["Ожидание клиента мс"] || 0);
+    let rest = +r["Ожидание ресурсов мс"] || 0;
+    for (const k of [1, 2, 3]) {
+      const w = /^(.*) \((\d+) мс\)$/.exec(r[`Ожидание ресурсов ${k} место`] || "");
+      if (w) { add(w[1], waitCat(w[1]), +w[2]); rest -= +w[2]; }
+    }
+    add(t("прочие ожидания ресурсов (после 3 мест оператора)"), "oth", rest);
+  }
+  return [...m.values()];
+}
+// Ожидания идущего запуска по событиям (--profile): время между событиями statement/wait/idle - по состоянию
+// в начале отрезка (ожидание или работа = CPU); простой сессии и время между прогонами не считаются.
+// end - конец последнего отрезка (сейчас или конец процесса).
+// полоса идущего запуска по событиям: время от события до следующего - по состоянию в начале отрезка
+// (ожидание или CPU), простой и между прогонами - не считаются. Копится при получении (evAdd, waitFold):
+// события операторов в памяти хранятся не все.
+function waitAdd(m, w, ms) {
+  if (!(ms > 0)) return;
+  const name = w || "CPU", x = m.get(name) || m.set(name, {wait: name, cat: w ? waitCat(w) : "cpu", time: 0}).get(name);
+  x.time += ms;
+}
+function waitFold(a, e) {
+  if (!["statement", "wait", "idle", "pass"].includes(e.event)) return;
+  const at = evMs(e);
+  if (a.cur !== null) waitAdd(a.m, a.cur, at - a.t0);
+  a.cur = e.event === "idle" || e.event === "pass" ? null : (e.wait || "");
+  a.t0 = at;
+}
+function evWaitItems(p, end) {
+  const a = p.wacc;
+  if (!a) return [];
+  const m = new Map([...a.m].map(([k, x]) => [k, {...x}]));
+  if (a.cur !== null) waitAdd(m, a.cur, end - a.t0);
+  return [...m.values()];
+}
 function waitsRender() {
   const L = S.live.waits, body = secBody("waits"), D = L.data;
   if (!body || !D) return;
@@ -2758,12 +2964,7 @@ function waitsRender() {
   $("#waits-cnt").textContent = (pg ? t("за {n} с: выборок {k}, в среднем активных сессий {a}; время — оценка по выборкам", {n: D.seconds, k: nf(D.samples), a: nf(D.active)})
     : D.seconds ? t("за {n} с, всего {ms} мс", {n: D.seconds, ms: nf(D.total)}) : t("накоплено с перезапуска сервера, всего {ms} мс", {ms: nf(D.total)})) +
     (all ? " · " + t("весь сервер: отбора по базе нет") : L.db ? " · " + t("база {db}", {db: L.db}) : "");
-  const sums = {}, total = rows.reduce((a, r) => a + r.time, 0);
-  for (const r of rows) sums[r.cat] = (sums[r.cat] || 0) + r.time;
-  const groups = WAIT_GROUPS.filter(([k]) => sums[k]);
-  const tip = (k, n, d) => h(t(n) + " " + pct(sums[k] / total) + "\n" + waitTip(rows, k, d, total));
-  $("#waits-bar").innerHTML = total ? `<div class="wbar">${groups.map(([k, n, d]) => `<span class="g-${k}" style="flex:${sums[k]}" title="${tip(k, n, d)}"></span>`).join("")}</div>
-    <div class="wleg">${groups.map(([k, n, d]) => `<span title="${h(waitTip(rows, k, d, total))}"><i class="g-${k}"></i>${t(n)} <b>${pct(sums[k] / total)}</b></span>`).join("")}</div>` : "";
+  $("#waits-bar").innerHTML = waitBarHtml(rows);
   const cols = filled([
     [null, "", null, r => `<td class="acts2">${waitActs(r)}</td>`],
     ["wait", "Ожидание", "", r => `<td>${waitHtml(r.wait)}</td>`],
@@ -3254,11 +3455,13 @@ function viewSession(m, v) {
       <span class="noteed" title="${t("Заметка к наблюдению")}">${I.pen(15)}<span class="txt" id="s-note" data-ph="${t("+ заметка")}" contenteditable="true" onblur="if(S.live.folder)saveNote(baseName(S.live.folder), this.textContent)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"></span></span>
       <span class="lbl" id="s-info"></span><span class="inpq" id="s-inp"></span></div>
       <div class="row"><span class="ib big" title="${t("Показать в папке")}" onclick="if(S.live.folder)api('show_in_folder', S.live.folder)">${I.folder(19)}</span>
-        <a class="btn dark" id="s-stop" onclick="api('stop', ${p.info.id})">${I.stop(14)}${t("Остановить и сохранить")}</a></div></header>
+        <a class="btn" id="s-cancel" style="color:#9A3412" title="${t("Остановить наблюдение и удалить собранное (в корзину)")}" onclick="cancelSession(${p.info.id})">${I.trash(14)}${t("Отменить наблюдение")}</a>
+        <a class="btn dark" id="s-stop" onclick="api('stop', ${p.info.id})">${I.stop(14)}${t("Не наблюдать и сохранить")}</a></div></header>
     <section class="card hl strip"><span class="lbl" style="color:#2F4AC0;white-space:nowrap;margin-top:22px">${t("Сейчас")}</span><div class="lines" id="s-lines"></div></section>
     <section class="kpis">${kpiBox("q-t", "Время операторов", "мс")}${kpiBox("q-c", "CPU", "мс")}${kpiBox("q-l", "Ожидание блокировок", "мс")}${kpiBox("q-r", "Ожидание ресурсов", "мс")}${slowBox("q-slow", null)}</section>
+    <section class="card wcard" id="s-waits" style="display:none"></section>
     <div id="s-tables"></div>`;
-  S.live = {lines: 0, el: []};
+  S.live = {el: []};
   updateLive();
   loadSessionTables(p);
 }
@@ -3267,7 +3470,7 @@ async function loadSessionTables(p) {
   if (!st) return;
   S.live.folder = st.folder;
   let d;
-  try { d = await api("session_details", baseName(st.folder)); } catch (e) { return; }
+  try { d = await api("session_details", baseName(st.folder), TABLE_SHOW); } catch (e) { return; }
   if (!(S.view.k === "session" && S.view.pid === p.info.id)) return;
   $("#s-info").textContent = (d.header["Сессия"] ? d.header["Сессия"].split(";").slice(1).join(" ·") : "") + " · " + t("реестр обновлен {time}", {time: (d.header["Обновлено"] || "").slice(11)});
   $("#s-inp").outerHTML = inputLine(d.header, "s-inp");
@@ -3278,17 +3481,17 @@ async function loadSessionTables(p) {
   setKpi("q-t", sum("Время мс"), true); setKpi("q-c", sum("CPU мс"), true);
   setKpi("q-l", sum("Ожидание блокировок мс"), true); setKpi("q-r", sum("Ожидание ресурсов мс"), true);
   const ql = $("#q-l"); if (ql) ql.parentNode.style.color = sum("Ожидание блокировок мс") ? "#9A4A07" : "";
+  liveWaits("s-waits", regWaitItems(d.registry));      // по реестру (точнее событий), обновляется с ним раз в 10 с
   // реестр - выше журнала; кольцо у заголовка заполняется за FLUSH_S до следующего обновления файлов
   // (отсчет от последнего события flush, до первого - от начала наблюдения) и обнуляется, когда
   // новые файлы пришли и таблицы перерисованы (кольцо создается заново)
-  const last = [...p.events].reverse().find(e => e.event === "flush") || st;
-  const ring = p.info.code === null ? flushRing(Date.now() - evMs(last)) : "";
+  const ring = sessRingHtml(p);
   // высота блока держится до отрисовки строк (tableCard рисует их следующим шагом), иначе страница на миг
   // становится короче и прокрутка уезжает наверх
   const box = $("#s-tables"), main = $("#main"), top = main.scrollTop;
   box.style.minHeight = box.offsetHeight + "px";
   box.innerHTML = tableCard("sreg", t("Реестр операторов"), t("по времени · обновляется раз в 10 с"), REG_COLS, d.registry, d.folder + "\\registry.csv", d.folder, "reg", ring) +
-    tableCard("slog", t("Журнал выполнения"), "log.csv · " + t("новые сверху"), LOG_COLS, linkLog(d.log, d.registry).reverse(), d.folder + "\\log.csv", d.folder, "log");
+    tableCard("slog", t("Журнал выполнения"), "log.csv · " + t("новые сверху") + (d.log.length >= TABLE_SHOW ? " · " + t("последние {n}", {n: nf(TABLE_SHOW)}) : ""), LOG_COLS, linkLog(d.log, d.registry).reverse(), d.folder + "\\log.csv", d.folder, "log");
   setTimeout(() => { box.style.minHeight = ""; main.scrollTop = top; });     // после строк таблиц
 }
 // исходный запрос сессии из шапки registry.txt (последний батч клиента: часто вызов процедуры с параметрами)
@@ -3297,16 +3500,32 @@ function inputLine(header, id) {
   return `<span class="inpq" id="${id}" title="${h(q)}">${q && q !== "нет данных" ? `<span class="pale">${t("исходный запрос:")}</span> ${h(q)}` : ""}</span>`;
 }
 const FLUSH_S = 10;         // --session: файлы реестра перезаписываются раз в столько секунд (SESSION_FLUSH_S)
-function flushRing(elapsed) {
-  return `<span class="ring" title="${t("До следующего обновления реестра")}"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" class="rb"/><circle cx="10" cy="10" r="8" class="rf" style="animation-duration:${FLUSH_S}s;animation-delay:-${Math.min(Math.max(0, elapsed), FLUSH_S * 1000)}ms"/></svg></span>`;
+// Клик по кольцу - пауза экрана (§4.1): процесс собирает и пишет файлы как обычно, экран их не читает;
+// кольцо серое в два тона и идет дальше. Снятие паузы - одно чтение последних файлов.
+function sessRingHtml(p) {
+  if (p.info.code !== null) return "";
+  const st = p.events.find(e => e.event === "start"), last = [...p.events].reverse().find(e => e.event === "flush") || st;
+  const elapsed = Math.min(Math.max(0, Date.now() - evMs(last)), FLUSH_S * 1000), pz = S.live.paused;
+  const tip = pz ? t("Обновление экрана приостановлено с {time}, данные собираются — продолжить", {time: hms(new Date(S.live.pausedAt))}) : t("До следующего обновления реестра — приостановить обновление экрана");
+  return `<span class="ring sr${pz ? " pause" : ""}" id="s-ring" title="${tip}" onclick="event.stopPropagation();sessPause()"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" class="rb"/><circle cx="10" cy="10" r="8" class="rf" style="animation-duration:${FLUSH_S}s;animation-delay:-${elapsed}ms"/>${pz ? '<path d="M8 6.5v7M12 6.5v7" stroke="#485264" stroke-width="2" stroke-linecap="round"/>' : ""}</svg></span>`;
+}
+function sessRing(p) {
+  const el = $("#s-ring");
+  if (el) el.outerHTML = sessRingHtml(p);
+}
+function sessPause() {
+  const p = S.procs[S.view.pid];
+  if (!p || S.view.k !== "session") return;
+  S.live.paused = !S.live.paused;
+  S.live.pausedAt = Date.now();
+  S.live.paused ? sessRing(p) : loadSessionTables(p);
 }
 function updateSession(p) {
   const ev = p.events, L = S.live, box = $("#s-lines");
   if (!box) return;
-  const items = ev.filter(e => e.event === "statement" || e.event === "idle");
-  while (L.lines < items.length) {
-    const e = items[L.lines];
-    L.lines++;
+  const items = ev.filter(e => e.n > (L.n || 0) && (e.event === "statement" || e.event === "idle"));
+  for (const e of items) {
+    L.n = e.n;
     const prev = L.el[L.el.length - 1];
     if (prev) {                 // старая строка поднимается, замирает 2 с и уходит (при новой смене - сразу)
       const t = prev.querySelector(".optm");
@@ -3321,7 +3540,7 @@ function updateSession(p) {
     el.className = "cl";
     const since = hms(srvDate(p, evMs(e)));     // время сервера, когда оператор попал в выборку
     el.innerHTML = e.event === "idle" ? `<span class="tmc">${since}</span><span class="tx">${t("нет запроса")}</span>`
-      : `<span class="tmc">${since}</span><span class="ob">${h(e.object)}${e.line ? ":" + e.line : ""}</span><span class="tx" title="${h(e.text)}">${h(e.text)}</span><span class="wbox"></span><span class="tm optm" data-t0="${evMs(e)}"></span>`;
+      : `<span class="tmc">${since}</span><span class="ob">${h(e.object)}${e.line ? ":" + e.line : ""}</span><span class="tx" title="${h(e.text)}">${h(e.text)}</span><span class="wbox"></span>${optmHtml(evMs(e), e.prev)}`;
     box.appendChild(el);
     L.el = L.el.filter(x => x.isConnected).concat(el);
     if (e.wait) setWait(el, e.wait, e.blocked_by, evMs(e));
@@ -3338,6 +3557,7 @@ function updateSession(p) {
   if (p.info.code !== null) {
     $("#s-chip").innerHTML = t("завершено");
     $("#s-stop").setAttribute("disabled", "");
+    $("#s-cancel").setAttribute("disabled", "");
   }
 }
 
@@ -3364,7 +3584,7 @@ async function viewSessionDone(m, v) {
       <div class="row">${sessRefActs(v.folder)}<span class="ib big" title="${t("Показать в папке")}" onclick="api('show_in_folder', ${h(JSON.stringify(d.folder + "\\registry.txt"))})">${I.folder(19)}</span>
         <span class="ib big" title="${t("Удалить в корзину")}" onclick="deleteSession(${h(JSON.stringify(v.folder))})">${I.trash(19)}</span></div></header>
     <section class="kpis">${kpi("Время операторов", "Время мс")}${kpi("CPU", "CPU мс")}${kpi("Ожидание блокировок", "Ожидание блокировок мс")}${kpi("Ожидание ресурсов", "Ожидание ресурсов мс")}${d.slow ? slowBox("d-slow", d.slow, false, sum("Время мс")) : ""}</section>
-    ${tableCard("dreg", t("Реестр операторов"), "registry.csv", REG_COLS, d.registry, d.folder + "\\registry.csv", d.folder, "reg")}
+    ${tableCard("dreg", t("Реестр операторов"), "registry.csv", REG_COLS, d.registry, d.folder + "\\registry.csv", d.folder, "reg", "", 0, waitBarHtml(regWaitItems(d.registry)))}
     ${tableCard("dlog", t("Журнал выполнения"), "log.csv", LOG_COLS, linkLog(d.log, d.registry), d.folder + "\\log.csv", d.folder, "log", "", LOG_COLLAPSE)}`;
 }
 
@@ -3416,6 +3636,7 @@ async function start() {
 }
 let started = false;
 function startOnce() { if (!started) { started = true; start(); } }
+// окно: старт, когда мост pywebview готов (событие или уже готов); --dev - сразу
 window.addEventListener("pywebviewready", startOnce);
-setTimeout(() => { if (!window.pywebview) startOnce(); }, 300);   // режим --dev: pywebview нет
+if (window.CQ_DEV || (window.pywebview && window.pywebview.api && window.pywebview.api.state)) startOnce();
 window.addEventListener("resize", () => fitHint());
